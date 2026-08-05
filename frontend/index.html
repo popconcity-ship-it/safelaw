@@ -310,6 +310,10 @@
       font-size: 0.93rem;
       white-space: pre-wrap;
       box-sizing: border-box;
+      /* flex 컬럼(#messages)에서 말풍선 높이 수축 → 글자 잘림 방지 */
+      flex: 0 0 auto;
+      min-height: min-content;
+      line-height: 1.5;
     }
     /* 사용자 말풍선: 한글 한 글자씩 세로로 깨지지 않게 */
     .msg.user {
@@ -336,7 +340,10 @@
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
       overflow-wrap: anywhere;
       word-break: break-word;
-      overflow-x: hidden;
+      /* overflow 시 flex min-size=0 이 되어 납작해지므로 x만 클립 */
+      overflow-x: clip;
+      overflow-y: visible;
+      line-height: 1.5;
     }
     .msg.bot a {
       word-break: break-all;
@@ -600,7 +607,21 @@
       color: var(--muted);
       text-align: center;
     }
-    .typing { color: var(--muted); font-style: italic; }
+    /* 조회 중 한 줄 — 높이·줄간 확보 (이전: flex 수축으로 세로 잘림) */
+    .typing {
+      display: inline-block;
+      color: var(--muted);
+      font-style: italic;
+      line-height: 1.5;
+      min-height: 1.5em;
+      padding: 2px 0;
+      vertical-align: middle;
+    }
+    .msg.bot:has(> .typing:only-child) {
+      min-height: 2.75rem;
+      display: flex;
+      align-items: center;
+    }
 
     /* simple markdown-ish */
     .msg.bot h3 { font-size: 0.95rem; margin: 10px 0 4px; color: #1e40af; }
