@@ -1196,41 +1196,40 @@
       return "warn";
     }
 
+    /**
+     * 답변 하단 푸터 — 카드(법령·KOSHA)와 겹치는 요약/의도/성공 배지는 제거.
+     * 남기는 것: 인용 실패·경고, 데모 안내, 문서 생성 시 복사·다운로드.
+     */
     function renderMeta(data) {
-      const cites = (data.citations || [])
-        .map((c) => `<span class="cite ${citeClass(c.status)}">${esc(c.message || c.raw)}</span>`)
+      const warnCites = (data.citations || []).filter((c) =>
+        ["not_found", "content_mismatch", "unclear"].includes(c.status)
+      );
+      const cites = warnCites
+        .map(
+          (c) =>
+            `<span class="cite ${citeClass(c.status)}">${esc(c.message || c.raw)}</span>`
+        )
         .join("");
-      const arts = (data.articles_used || [])
-        .map((a) => `${esc(a.law_name)} 제${esc(a.article_no)}조`)
-        .join(" · ");
-      const kosha = (data.kosha_sources || [])
-        .map((k) => {
-          const label = `KOSHA ${esc(k.code || k.title)}`;
-          const pdf = k.pdf_url || (k.url && String(k.url).startsWith("/api/kosha/pdf/") ? k.url : "");
-          if (pdf) {
-            return `<a class="kosha-tag" href="${esc(pdf)}" target="_blank" rel="noopener" title="원문 PDF 보기">${label} · PDF</a>`;
-          }
-          return `<span class="kosha-tag" title="${esc(k.summary || "")}">${label}</span>`;
-        })
-        .join("");
-      const mode = data.demo ? "데모 모드" : "라이브";
       let docBar = "";
       if (data.document && data.document.markdown) {
         const id = "doc-" + Math.random().toString(36).slice(2, 8);
         window.__docs = window.__docs || {};
         window.__docs[id] = data.document;
-        const fname = (data.document.doc_type === "tbm" ? "TBM_" : "위험성평가_") + "초안.md";
+        const fname =
+          (data.document.doc_type === "tbm" ? "TBM_" : "위험성평가_") + "초안.md";
         docBar = `<div class="doc-bar">
           <button type="button" data-copy="${id}">문서 복사</button>
           <button type="button" data-dl="${id}" data-fn="${esc(fname)}">.md 다운로드</button>
           <span class="cite demo">${data.document.used_llm ? "LLM 보완" : "템플릿"}</span>
         </div>`;
       }
+      const demoNote = data.demo
+        ? `<div class="cite demo">데모 모드 · 실제 법제처/LLM 키가 없을 때 검색 요약만 표시</div>`
+        : "";
+      if (!cites && !docBar && !demoNote) return "";
       return `<div class="meta">
-        <div>의도: ${esc(data.intent || "-")} · ${mode}</div>
-        ${arts ? `<div style="margin-top:4px">법령 근거: ${arts}</div>` : ""}
-        ${kosha ? `<div style="margin-top:6px">실무 가이드: ${kosha}</div>` : ""}
-        ${cites ? `<div style="margin-top:6px">${cites}</div>` : ""}
+        ${demoNote}
+        ${cites ? `<div>${cites}</div>` : ""}
         ${docBar}
       </div>`;
     }
