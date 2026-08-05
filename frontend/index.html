@@ -110,6 +110,10 @@
       white-space: nowrap;
     }
     button.btn-settings:hover { border-color: var(--accent); }
+    /* 운영자 UI: 일반 사용자에게 숨김 (로컬 / ?admin=1 만 표시) */
+    .admin-only { display: none !important; }
+    body.admin-ui .admin-only { display: revert !important; }
+    body.admin-ui .badges.admin-only { display: flex !important; }
 
     /* Settings modal */
     .modal-backdrop {
@@ -705,12 +709,12 @@
       <span>SafeLaw</span>
     </button>
     <div class="header-actions">
-      <div class="badges" id="badges">
+      <div class="badges admin-only" id="badges" title="운영자 상태">
         <span class="badge">연결 확인 중…</span>
       </div>
       <button type="button" class="btn-home" id="btnHome2" title="홈으로">홈</button>
-      <button type="button" class="btn-home" id="btnKoshaPdf" title="KOSHA PDF 수집">PDF 수집</button>
-      <button type="button" class="btn-settings" id="btnSettings">API 키</button>
+      <button type="button" class="btn-home admin-only" id="btnKoshaPdf" title="KOSHA PDF 수집 (운영)">PDF 수집</button>
+      <button type="button" class="btn-settings admin-only" id="btnSettings" title="API 키 (운영)">API 키</button>
     </div>
   </header>
 
@@ -844,7 +848,7 @@
       <button type="button" data-q="지게차 하역 작업 위험성평가표 만들어줘">📄 위험성평가표 생성</button>
       <button type="button" data-q="지게차 작업 TBM 일지 만들어줘">📋 TBM 일지 생성</button>
       <button type="button" data-q="밀폐공간 작업 KOSHA 가이드 알려줘">📘 KOSHA 가이드</button>
-      <button type="button" id="btnKoshaPdf2">📥 PDF 수집·인제스트</button>
+      <button type="button" id="btnKoshaPdf2" class="admin-only">📥 PDF 수집·인제스트</button>
     </div>
 
     <div class="chips" id="chips">
@@ -867,6 +871,30 @@
 
   <script>
     const $ = (s) => document.querySelector(s);
+
+    /** 운영자 헤더/도구 표시 여부 — 일반 수험·실무 화면에는 숨김 */
+    function isAdminUi() {
+      try {
+        const host = location.hostname;
+        if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+          return true;
+        }
+        const p = new URLSearchParams(location.search);
+        if (
+          p.get("admin") === "1" ||
+          p.get("settings") === "1" ||
+          p.get("kosha") === "1"
+        ) {
+          return true;
+        }
+        if (localStorage.getItem("safelaw_admin") === "1") return true;
+      } catch (_) {}
+      return false;
+    }
+    function applyAdminUi() {
+      document.body.classList.toggle("admin-ui", isAdminUi());
+    }
+    applyAdminUi();
     const messagesEl = $("#messages");
     const input = $("#input");
     const sendBtn = $("#send");
@@ -1752,11 +1780,15 @@
     });
 
     (async () => {
+      applyAdminUi();
+      // 상태 배지는 운영 UI에서만 의미 — 일반 화면은 호출 생략 가능하나 가벼워 유지
       await refreshHealth();
-      // 설정 창: 기본은 안 띄움. 버튼으로만 연다.
-      // ?settings=1 일 때만 자동 오픈 (의도적 진입)
+      // 설정 창: 운영자만. ?settings=1 / ?kosha=1 / ?admin=1
       const params = new URLSearchParams(location.search);
-      if (params.get("settings") === "1" || params.get("kosha") === "1") {
+      if (
+        isAdminUi() &&
+        (params.get("settings") === "1" || params.get("kosha") === "1")
+      ) {
         openSettings(
           params.get("kosha") === "1" ? "#inpDataGo" : "#inpGemini"
         );
