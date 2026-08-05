@@ -1092,11 +1092,13 @@
     function lawBodyHtml(body, titleHint) {
       let t = normalizeLawBody(body);
       if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
-      // 제목 줄이 본문에 반복되면 제거 (카드 헤더에 이미 있음)
-      t = t.replace(/^제\s*\d+(?:의\d+)?조[^\n]*\n?/, "");
+      // 카드 헤더에 이미 있는 「제N조(제목)」 접두만 제거.
+      // ⛔ [^\n]* 금지 — 제146조처럼 제목·본문이 한 줄이면 전문이 통째로 사라짐
+      t = t.replace(/^제\s*\d+(?:의\d+)?조(?:\s*\([^)]*\))?/, "").trim();
       if (titleHint) {
         const th = String(titleHint).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        t = t.replace(new RegExp("^" + th + "\\s*\\n?"), "");
+        // 제목 문자열이 본문 맨 앞에 단독으로만 반복될 때 제거 (본문 안의 동일 문구 보호)
+        t = t.replace(new RegExp("^" + th + "(?=\\s|$|①|\\d+\\.)"), "").trim();
       }
       t = t.replace(/\n{2,}/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
       // 항 기호 앞에서만 줄바꿈 (이미 줄 시작이면 유지)
