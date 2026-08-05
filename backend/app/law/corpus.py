@@ -125,6 +125,58 @@ def reload_corpus() -> int:
     return len(load_corpus())
 
 
+def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
+    """법령명 힌트 + 조 번호로 단건 조회 (전문검색보다 정확).
+
+    본법 우선, 시행령·규칙은 힌트에 있을 때만 우대.
+    """
+    art = str(article_no or "").strip()
+    if not art:
+        return None
+    hint = re.sub(r"\s+", "", (law_hint or "").replace("·", "ㆍ").replace("‧", "ㆍ"))
+    # 약칭
+    if "산안법" in hint and "산업안전" not in hint:
+        hint = hint.replace("산안법", "산업안전보건법")
+    if "중처법" in hint:
+        hint = hint.replace("중처법", "중대재해처벌등에관한법률")
+
+    want_sub = any(x in hint for x in ("시행령", "시행규칙", "규칙", "지침", "고시"))
+    best: tuple[float, dict] | None = None
+    for row in load_corpus():
+        if str(row.get("article_no") or "") != art:
+            continue
+        name = row.get("law_name") or ""
+        nn = re.sub(r"\s+", "", name.replace("·", "ㆍ"))
+        score = 0.0
+        if hint and nn == hint:
+            score = 100.0
+        elif hint and (hint in nn or nn in hint):
+            score = 50.0
+        elif hint and len(hint) >= 4 and hint[:6] in nn:
+            score = 30.0
+        elif not hint:
+            score = 5.0
+        else:
+            continue
+        if not want_sub:
+            if name == "산업안전보건법" or name.startswith("중대재해"):
+                score += 20.0
+            elif "시행령" in name:
+                score -= 15.0
+            elif "시행규칙" in name or "기준에 관한 규칙" in name:
+                score -= 25.0
+        else:
+            if "시행령" in hint and "시행령" in name:
+                score += 15.0
+            if "시행규칙" in hint and "시행규칙" in name:
+                score += 15.0
+        if best is None or score > best[0]:
+            best = (score, row)
+    if best and best[0] > 0:
+        return dict(best[1])
+    return None
+
+
 def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
     """조문 제목·본문 토큰 매칭. score 높은 순.
 

@@ -19,46 +19,59 @@
 필수/권장:
 
 ```
-GEMINI_API_KEY=...
+GROQ_API_KEY=...          # 무료 티어 LLM (우선)
+GROQ_MODEL=llama-3.1-8b-instant
 LAW_OC=...
-DATA_GO_KR_KEY=...   # 선택
-GEMINI_MODEL=gemini-2.0-flash
+GEMINI_API_KEY=...        # 선택 (Groq 없을 때)
+DATA_GO_KR_KEY=...        # 선택
 DEMO_MODE=auto
+ENABLE_LLM=true
 ```
 
-## A) Render 무료 (현재 권장 · 테스트용)
+운영 UI(PDF 수집·API 키·상태 배지): **로컬** 또는 `https://…/?admin=1`
 
-**잠자기:** 약 15분 무접속 시 서버 절전 → 다음 접속 시 30초~1분 지연 (테스트 감수).
+## A) Render 무료 (현재 · https://safelaw.onrender.com)
 
-### 클릭 배포 (Blueprint)
+**잠자기:** 약 15분 무접속 시 절전 → 다음 접속 30초~1분 지연.
 
-1. https://dashboard.render.com 가입 (GitHub 로그인)
-2. **New** → **Blueprint**
-3. 저장소 **`popconcity-ship-it/safelaw`** 연결 (Private이면 Render에 GitHub 권한 허용)
-4. `render.yaml` 감지 → **Apply**
-5. 서비스 **Environment** 에 키 입력 후 저장 (Redeploy):
+### 자동 배포 (main push)
 
-```text
-GEMINI_API_KEY=...
-LAW_OC=...
-DATA_GO_KR_KEY=...   # 선택
-GEMINI_MODEL=gemini-2.0-flash
-DEMO_MODE=auto
-```
-
-6. 배포 완료 후 URL: `https://safelaw-xxxx.onrender.com`
-7. 확인: `https://…/api/health`
-
-원클릭 시도 (로그인 필요):
-
-https://dashboard.render.com/blueprint/new?repo=https%3A%2F%2Fgithub.com%2Fpopconcity-ship-it%2Fsafelaw
-
-### CLI (선택)
+서비스에 **Auto-Deploy = Yes**, branch **main**, repo  
+`https://github.com/popconcity-ship-it/safelaw` 가 연결돼 있어야 한다.
 
 ```bash
-brew install render   # 또는 Render 문서의 CLI
+# 재확인·재활성화
+render services update srv-d9plkdrm8hqs73fqlr20 \
+  --auto-deploy --repo https://github.com/popconcity-ship-it/safelaw \
+  --branch main --confirm -o text
+
+# 수동 배포 (자동이 안 돌 때)
+./scripts/deploy_render.sh
+# 또는
+render deploys create srv-d9plkdrm8hqs73fqlr20 --commit "$(git rev-parse HEAD)" --confirm --wait
+```
+
+Dashboard: https://dashboard.render.com/web/srv-d9plkdrm8hqs73fqlr20  
+→ **Settings → Build & Deploy → Auto-Deploy** 가 On 인지 확인.  
+GitHub 앱 권한이 빠지면 push 해도 배포가 안 되고 예전에 `api` 트리거만 쌓인다.
+
+### Environment (Dashboard)
+
+```text
+GROQ_API_KEY=...
+LAW_OC=...
+GEMINI_API_KEY=...   # 선택
+DEMO_MODE=auto
+ENABLE_LLM=true
+```
+
+헬스: `https://safelaw.onrender.com/api/health`
+
+### CLI
+
+```bash
+brew install render
 render login
-# 대시보드 Blueprint가 더 단순함
 ```
 
 ## B) Railway (대안)

@@ -167,6 +167,10 @@ class Orchestrator:
                 kosha_block=short_kosha,
             )
 
+        # 답변에 인용된 조문이 카드에 없으면 코퍼스에서 보강 (클릭·전문 정합)
+        if not document_payload:
+            articles = self._enrich_articles_from_answer(answer, articles)
+
         # 인용 재조회(법제처)는 느림 → 이미 확보한 조문으로 가벼운 검증만
         citations = self._citations_from_articles(answer, articles)
         if not document_payload:
@@ -183,51 +187,126 @@ class Orchestrator:
         )
 
     @staticmethod
-    def _citations_from_articles(
-        answer: str, articles: list[Article]
-    ) -> list[CitationResult]:
-        """네트워크 없이 답변 인용 vs 이번 검색 조문만 교차 확인."""
-        extracted = extract_citations(answer or "")
-        results: list[CitationResult] = []
-        seen: set[tuple[str, str]] = set()
+    def _norm_law(s: str) -> str:
+        return re.sub(r"\s+", "", (s or "").replace("·", "ㆍ").replace("‧", "ㆍ"))
 
-        def _norm(s: str) -> str:
-            return re.sub(r"\s+", "", (s or "").replace("·", "ㆍ").replace("‧", "ㆍ"))
+    def _article_match(
+        self, law: str, art: str, articles: list[Article]
+    ) -> Article | None:
+        law_n = self._norm_law(law)
+        for a in articles:
+            if str(a.article_no) != str(art):
+                continue
+            an = self._norm_law(a.law_name)
+            if not law_n or law_n in an or an in law_n:
+                return a
+            if len(law_n) >= 2 and (law_n[:4] in an or an[:4] in law_n):
+                return a
+            # 약칭
+            aliases = {
+                "산안법": "산업안전보건법",
+                "중처법": "중대재해",
+            }
+            for short, full in aliases.items():
+                if short in law_n and full in an:
+                    return a
+                if short in an and full in law_n:
+                    return a
+        return None
+
+    def _enrich_articles_from_answer(
+        self, answer: str, articles: list[Article]
+    ) -> list[Article]:
+        """답변 본문 인용 조문을 코퍼스에서 보강 — 카드·클릭 정합.
+
+        네트워크(법제처) 없이 로컬 코퍼스만. 최대 6건.
+        """
+        from ..law.corpus import get_corpus_article
+
+        extracted = extract_citations(answer or "")
+        if not extracted:
+            return articles
+
+        out = list(articles)
+        seen: set[tuple[str, str]] = {
+            (self._norm_law(a.law_name), str(a.article_no)) for a in out
+        }
+
+        # 인용 순서로 앞에 붙일 보강분
+        enriched_front: list[Article] = []
 
         for c in extracted:
             law = c.get("law_name") or ""
             art = str(c.get("article_no") or "")
-            key = (_norm(law), art)
+            if not art:
+                continue
+            if self._article_match(law, art, out):
+                continue
+            key = (self._norm_law(law), art)
+            if key in seen:
+                continue
+
+            hit = get_corpus_article(law, art)
+            if not hit and ("산안법" in law or "산업안전" in law or not law):
+                hit = get_corpus_article("산업안전보건법", art)
+            if not hit:
+                continue
+
+            a = Article(
+                law_name=hit["law_name"],
+                article_no=str(hit["article_no"]),
+                title=hit.get("title") or "",
+                body=hit.get("body") or "",
+                mst=hit.get("mst"),
+                source="corpus",
+            )
+            seen.add((self._norm_law(a.law_name), str(a.article_no)))
+            enriched_front.append(a)
+            out.append(a)
+            if len(out) >= 8:
+                break
+
+        if not enriched_front:
+            return out[:6]
+
+        # 인용된 조문을 카드 앞쪽에 (클릭 시 바로 보임)
+        rest = [a for a in out if a not in enriched_front]
+        # 인용 순서 우선 + 기존 검색 조문
+        ordered: list[Article] = []
+        for a in enriched_front + rest:
+            k = (self._norm_law(a.law_name), str(a.article_no))
+            if any(
+                (self._norm_law(x.law_name), str(x.article_no)) == k for x in ordered
+            ):
+                continue
+            ordered.append(a)
+        return ordered[:6]
+
+    def _citations_from_articles(
+        self, answer: str, articles: list[Article]
+    ) -> list[CitationResult]:
+        """네트워크 없이 답변 인용 vs 이번 검색·보강 조문 교차 확인."""
+        extracted = extract_citations(answer or "")
+        results: list[CitationResult] = []
+        seen: set[tuple[str, str]] = set()
+
+        for c in extracted:
+            law = c.get("law_name") or ""
+            art = str(c.get("article_no") or "")
+            key = (self._norm_law(law), art)
             if key in seen:
                 continue
             seen.add(key)
-            matched: Article | None = None
-            law_n = _norm(law)
-            for a in articles:
-                if str(a.article_no) != art:
-                    continue
-                an = _norm(a.law_name)
-                if not law_n or law_n in an or an in law_n:
-                    matched = a
-                    break
-                # 약칭: 산안법 / 중처법 등 부분 일치
-                if len(law_n) >= 2 and (law_n[:4] in an or an[:4] in law_n):
-                    matched = a
-                    break
+            matched = self._article_match(law, art, articles)
             if matched:
-                src = matched.source
-                status = "demo" if src in ("demo", "corpus", "cache") else "verified"
-                if src == "law_api":
-                    status = "verified"
-                elif src == "corpus":
-                    status = "verified"  # 로컬 전문 코퍼스 일치
                 results.append(
                     CitationResult(
-                        raw=c.get("raw") or f"{matched.law_name} 제{matched.article_no}조",
+                        raw=c.get("raw")
+                        or f"{matched.law_name} 제{matched.article_no}조",
                         law_name=matched.law_name,
                         article_no=matched.article_no,
                         hang=c.get("hang"),
-                        status=status,
+                        status="verified",
                         official_title=matched.title or None,
                         message=(
                             f"「{matched.law_name}」 제{matched.article_no}조"
@@ -245,25 +324,12 @@ class Orchestrator:
                         hang=c.get("hang"),
                         status="unclear",
                         message=(
-                            f"「{law}」 제{art}조 — 이번 검색 조문에 없어 "
-                            "원문 확인 권장 (네트워크 재조회 생략)"
+                            f"「{law}」 제{art}조 — 로컬 코퍼스에도 없어 "
+                            "원문 확인 권장"
                         ),
                     )
                 )
 
-        # 본문에 인용이 없어도 사용한 조문은 출처로 표시
-        if not results:
-            for a in articles[:4]:
-                results.append(
-                    CitationResult(
-                        raw=f"{a.law_name} 제{a.article_no}조",
-                        law_name=a.law_name,
-                        article_no=a.article_no,
-                        status="verified" if a.source != "demo" else "demo",
-                        official_title=a.title or None,
-                        message=f"「{a.law_name}」 제{a.article_no}조 — 검색에 사용",
-                    )
-                )
         return results
 
     async def generate_document_supplement(

@@ -1191,16 +1191,31 @@
       navigator.clipboard?.writeText(text).catch(() => {});
     }
 
-    /** 긴 답변은 맨 아래가 아니라 해당 메시지 시작이 보이도록 스크롤 */
-    function scrollToMsgStart(el) {
+    /** 메시지 시작이 보이도록 스크롤 (messages 컨테이너 기준) */
+    function scrollToMsgStart(el, behavior) {
       if (!el || !messagesEl) return;
-      // messages 컨테이너 기준 offset
       const top =
         el.getBoundingClientRect().top -
         messagesEl.getBoundingClientRect().top +
         messagesEl.scrollTop -
         8;
-      messagesEl.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      messagesEl.scrollTo({
+        top: Math.max(0, top),
+        behavior: behavior || "smooth",
+      });
+    }
+
+    /**
+     * 이번 턴(유저 말풍선)을 뷰 상단에 맞춤.
+     * 이전 긴 조문 카드 중간에 걸리지 않게 — 추가 질문 UX.
+     */
+    function scrollTurnIntoView(userEl) {
+      if (!userEl) return;
+      requestAnimationFrame(() => {
+        scrollToMsgStart(userEl, "smooth");
+        // 레이아웃(카드 렌더) 후 한 번 더 보정
+        setTimeout(() => scrollToMsgStart(userEl, "auto"), 80);
+      });
     }
 
     function addMsg(role, html, metaHtml, opts) {
@@ -1208,8 +1223,9 @@
       div.className = "msg " + (role === "user" ? "user" : "bot");
       div.innerHTML = html + (metaHtml || "");
       messagesEl.appendChild(div);
-      // 기본: 메시지 시작으로 (하단 점프 금지). forceBottom 만 맨 아래
-      if (opts && opts.forceBottom) {
+      if (opts && opts.skipScroll) {
+        /* 호출 측에서 턴 단위 스크롤 */
+      } else if (opts && opts.forceBottom) {
         messagesEl.scrollTop = messagesEl.scrollHeight;
       } else {
         scrollToMsgStart(div);
@@ -1662,12 +1678,24 @@
       $("#chips")?.remove();
       $("#tools")?.remove();
 
-      addMsg("user", esc(q));
+      // 이전 턴에서 펼친 전문은 접어 높이 줄임 (추가 질문 시 화면 혼잡 완화)
+      messagesEl.querySelectorAll(".law-card.open").forEach((c) => {
+        setLawCardOpen(c, false);
+      });
+
+      const userEl = addMsg("user", esc(q), null, { skipScroll: true });
       history.push({ role: "user", content: q });
       sending = true;
       sendBtn.disabled = true;
-      const pending = addMsg("bot", '<span class="typing">조문·가이드 조회 중…</span>');
+      const pending = addMsg(
+        "bot",
+        '<span class="typing">조문·가이드 조회 중…</span>',
+        null,
+        { skipScroll: true }
+      );
       pending.classList.add("is-typing");
+      // 이번 질문 말풍선이 뷰 상단 — 이전 조문 카드 잔상 위에 안 걸림
+      scrollTurnIntoView(userEl);
       // 1.2초 넘기면 LLM 단계 문구 (조회 자체는 보통 0.1~0.5초)
       const stageTimer = setTimeout(() => {
         if (pending.querySelector(".typing")) {
@@ -1707,12 +1735,12 @@
           });
         });
         history.push({ role: "assistant", content: data.answer });
-        // 긴 답변: 하단이 아니라 답 시작 부분이 보이도록
-        requestAnimationFrame(() => scrollToMsgStart(pending));
+        // 답 도착 후에도 이번 질문부터 보이도록 (이전 카드 중간 X)
+        scrollTurnIntoView(userEl);
       } catch (e) {
         pending.classList.remove("is-typing");
         pending.innerHTML = "요청에 실패했습니다. 서버가 실행 중인지 확인해 주세요.<br/><span class='meta'>" + esc(String(e)) + "</span>";
-        requestAnimationFrame(() => scrollToMsgStart(pending));
+        scrollTurnIntoView(userEl);
       } finally {
         clearTimeout(stageTimer);
         sending = false;
