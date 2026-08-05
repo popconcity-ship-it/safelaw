@@ -56,7 +56,15 @@ def _score_item(title: str, category: str, code: str) -> int:
 
 
 def _indexed_stems() -> set[str]:
-    """청크 전체 로드 없이 text/*.json 기준으로 인제스트 여부 판별 (빠름)."""
+    """인제스트된 지침번호 — 인덱스 메타(캐시) 우선, text/*.json 보조."""
+    try:
+        from .pdf_pipeline import index_meta
+
+        codes = index_meta().get("codes") or set()
+        if codes:
+            return set(codes)
+    except Exception:
+        pass
     if not TEXT_DIR.is_dir():
         return set()
     return {p.stem for p in TEXT_DIR.glob("*.json")}
@@ -143,6 +151,12 @@ def library_search(
     toks = [t for t in re.findall(r"[가-힣a-z0-9][가-힣a-z0-9\-]*", q_low) if len(t) >= 2]
     indexed = _indexed_stems()
     pdf_files = _pdf_stems()
+    try:
+        from .r2 import r2_enabled
+
+        has_r2 = r2_enabled()
+    except Exception:
+        has_r2 = False
     catalog = load_catalog()
     by_code = {g.get("code") or "": g for g in catalog}
 
@@ -151,24 +165,32 @@ def library_search(
 
     rows: list[dict] = []
 
+    def has_pdf(code: str) -> bool:
+        # Render 등: 로컬 0이어도 R2+인덱스면 열람 가능
+        return code in pdf_files or (has_r2 and code in indexed)
+
     def status_of(code: str) -> str:
         if code in indexed:
             return "ingested"
         if code in pdf_files:
             return "file_only"
+        if has_r2 and code in indexed:
+            return "ingested"
         return "todo"
 
     def row_from(code: str, title: str, category: str, score: float) -> dict:
+        pdf_ok = has_pdf(code)
         return {
             "code": code,
             "title": title,
             "category": category,
             "priority": int(score),
             "portal_url": portal_link(code, title),
-            "has_pdf_file": code in pdf_files,
+            "has_pdf_file": pdf_ok,
             "ingested": code in indexed,
             "status": status_of(code),
             "score": round(score, 2),
+            "pdf_url": f"/api/kosha/pdf/file/{code}" if pdf_ok else "",
         }
 
     for g in catalog:
@@ -179,7 +201,7 @@ def library_search(
         cat = g.get("category") or ""
         blob = f"{code} {title} {cat} {g.get('committee') or ''}".lower()
 
-        if scope == "local" and code not in pdf_files:
+        if scope == "local" and not has_pdf(code):
             continue
         if scope == "priority":
             sc = _score_item(title, cat, code)
@@ -201,10 +223,10 @@ def library_search(
                     hit += 1.5
             if hit <= 0:
                 continue
-            sc = hit + (2.0 if code in pdf_files else 0.0)
+            sc = hit + (2.0 if has_pdf(code) else 0.0)
         elif scope == "all":
-            # 검색어 없으면 로컬 PDF 우선 + 코드순 (전체 나열은 limit까지)
-            sc = (1000.0 if code in pdf_files else 0.0) + (10.0 if code in indexed else 0.0)
+            # 검색어 없으면 PDF/인덱스 있는 것 우선
+            sc = (1000.0 if has_pdf(code) else 0.0) + (10.0 if code in indexed else 0.0)
 
         rows.append(row_from(code, title, cat, sc))
 
@@ -236,5 +258,6 @@ def library_search(
         "catalog_total": len(catalog),
         "local_pdfs": len(pdf_files),
         "indexed": len(indexed),
+        "r2_enabled": has_r2,
         "items": out,
     }

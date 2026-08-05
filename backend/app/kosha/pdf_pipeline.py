@@ -219,19 +219,95 @@ def ingest_pdf_dir(directory: Path | None = None) -> list[dict]:
     return results
 
 
-def _load_all_chunks_raw() -> list[dict]:
+# 메모리 캐시 — 32MB chunks.jsonl 을 요청마다 다시 읽지 않음
+_chunks_cache: list[dict] | None = None
+_chunks_mtime: float | None = None
+_meta_cache: dict | None = None
+
+
+def _index_mtime() -> float | None:
     if not INDEX_PATH.is_file():
+        return None
+    try:
+        return INDEX_PATH.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _load_all_chunks_raw() -> list[dict]:
+    """청크 전체 로드 (mtime 캐시). 검색용 — 통계만 필요하면 index_meta()."""
+    global _chunks_cache, _chunks_mtime
+    mtime = _index_mtime()
+    if mtime is None:
+        _chunks_cache = []
+        _chunks_mtime = None
         return []
-    out = []
-    for line in INDEX_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    if _chunks_cache is not None and _chunks_mtime == mtime:
+        return _chunks_cache
+    out: list[dict] = []
+    with INDEX_PATH.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    _chunks_cache = out
+    _chunks_mtime = mtime
     return out
+
+
+def index_meta() -> dict:
+    """문서 수·청크 수·코드 집합만 (전체 청크 본문 없이 1회 스캔 + 캐시)."""
+    global _meta_cache, _chunks_mtime
+    mtime = _index_mtime()
+    if mtime is None:
+        return {"docs": 0, "chunks": 0, "codes": set()}
+    if (
+        _meta_cache is not None
+        and _meta_cache.get("_mtime") == mtime
+        and isinstance(_meta_cache.get("codes"), set)
+    ):
+        return _meta_cache
+    # 이미 청크 캐시가 있으면 거기서 집계
+    if _chunks_cache is not None and _chunks_mtime == mtime:
+        codes = {c.get("code") for c in _chunks_cache if c.get("code")}
+        meta = {
+            "docs": len(codes),
+            "chunks": len(_chunks_cache),
+            "codes": codes,
+            "_mtime": mtime,
+        }
+        _meta_cache = meta
+        return meta
+    codes: set[str] = set()
+    n = 0
+    with INDEX_PATH.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            n += 1
+            # code 필드만 빠르게 추출 (전체 json 파싱 최소화)
+            try:
+                obj = json.loads(line)
+                c = obj.get("code")
+                if c:
+                    codes.add(c)
+            except json.JSONDecodeError:
+                continue
+    meta = {"docs": len(codes), "chunks": n, "codes": codes, "_mtime": mtime}
+    _meta_cache = meta
+    return meta
+
+
+def invalidate_chunk_cache() -> None:
+    global _chunks_cache, _chunks_mtime, _meta_cache
+    _chunks_cache = None
+    _chunks_mtime = None
+    _meta_cache = None
 
 
 def _write_chunks(chunks: list[dict]) -> None:
@@ -239,23 +315,28 @@ def _write_chunks(chunks: list[dict]) -> None:
     with INDEX_PATH.open("w", encoding="utf-8") as f:
         for c in chunks:
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
+    invalidate_chunk_cache()
 
 
 def indexed_codes() -> list[str]:
-    return sorted({c["code"] for c in _load_all_chunks_raw() if c.get("code")})
+    return sorted(index_meta()["codes"])
 
 
 def index_stats() -> dict:
-    chunks = _load_all_chunks_raw()
-    codes = {c["code"] for c in chunks}
-    pdf_n = len(list(PDF_DIR.glob("*.pdf"))) if PDF_DIR.is_dir() else 0
+    meta = index_meta()
+    pdf_n = 0
+    if PDF_DIR.is_dir():
+        # glob 전체 리스트 대신 카운트만
+        pdf_n = sum(1 for _ in PDF_DIR.glob("*.pdf"))
     return {
-        "docs": len(codes),
-        "chunks": len(chunks),
+        "docs": meta["docs"],
+        "chunks": meta["chunks"],
         "local_pdfs": pdf_n,
-        "codes": sorted(codes),
+        # codes 전체 배열은 응답 비대 + 느림 → 개수만
+        "code_count": meta["docs"],
         "pdf_dir": str(PDF_DIR),
         "index_path": str(INDEX_PATH),
+        "r2_pdfs": False,  # priority/library 쪽에서 덮어쓸 수 있음
     }
 
 

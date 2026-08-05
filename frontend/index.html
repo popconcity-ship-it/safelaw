@@ -596,8 +596,8 @@
     <div class="modal" style="width:min(720px,100%);max-height:92vh;overflow:auto">
       <h2>KOSHA PDF 라이브러리</h2>
       <p class="sub">
-        내려받은 PDF는 <code>data/kosha/pdfs/</code>에 있습니다.
-        아래 검색으로 <strong>전체 목록·로컬 파일</strong>을 찾고, 없으면 업로드·포털로 보충하세요.
+        배포 환경에서는 PDF가 <strong>R2</strong>에 있습니다. 제목·지침번호로 검색한 뒤
+        <strong>PDF</strong>로 원문을 여세요. (로컬 개발 시에는 디스크 파일도 사용)
       </p>
       <div class="field">
         <label>보유 현황</label>
@@ -611,8 +611,8 @@
       <div class="field" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label style="margin:0">범위</label>
         <select id="koshaLibScope" style="flex:1;min-width:140px;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
-          <option value="local">로컬 PDF만 (받은 파일)</option>
           <option value="all" selected>전체 카탈로그</option>
+          <option value="local">보유 PDF만 (로컬·R2·인덱스)</option>
           <option value="priority">우선 수집 키워드</option>
         </select>
       </div>
@@ -1056,8 +1056,8 @@
               <div style="color:var(--muted);font-size:0.75rem">${esc(g.category || "")}</div>
             </div>
             ${
-              g.ingested || g.has_pdf_file
-                ? `<a href="/api/kosha/pdf/file/${esc(g.code)}" target="_blank" rel="noopener" style="color:var(--ok);white-space:nowrap">PDF</a>`
+              g.ingested || g.has_pdf_file || g.pdf_url
+                ? `<a href="${esc(g.pdf_url || "/api/kosha/pdf/file/" + g.code)}" target="_blank" rel="noopener" style="color:var(--ok);white-space:nowrap">PDF</a>`
                 : ""
             }
             <a href="${esc(g.portal_url || "#")}" target="_blank" rel="noopener" style="color:var(--accent);white-space:nowrap">포털</a>
@@ -1066,7 +1066,17 @@
         .join("");
     }
 
-    async function refreshKoshaPdfPanel() {
+    let koshaStatsCache = null;
+
+    async function loadKoshaStatsOnce(force) {
+      if (koshaStatsCache && !force) return koshaStatsCache;
+      const r = await fetch("/api/kosha/pdf/stats");
+      koshaStatsCache = await r.json();
+      return koshaStatsCache;
+    }
+
+    async function refreshKoshaPdfPanel(opts) {
+      const onlyList = opts && opts.onlyList;
       const q = ($("#koshaLibQ") && $("#koshaLibQ").value.trim()) || "";
       const scope =
         ($("#koshaLibScope") && $("#koshaLibScope").value) || "all";
@@ -1076,12 +1086,17 @@
           limit: "80",
           scope,
         });
-        const [st, lib] = await Promise.all([
-          fetch("/api/kosha/pdf/stats").then((r) => r.json()),
-          fetch("/api/kosha/pdf/library?" + params).then((r) => r.json()),
-        ]);
+        // 통계는 모달 열 때 1회만 — 검색 타자마다 32MB급 인덱스 스캔 방지
+        const libP = fetch("/api/kosha/pdf/library?" + params).then((r) =>
+          r.json()
+        );
+        const st = onlyList
+          ? koshaStatsCache || (await loadKoshaStatsOnce(false))
+          : await loadKoshaStatsOnce(false);
+        const lib = await libP;
+        const r2 = st.r2_pdfs || lib.r2_enabled ? " · R2연결" : "";
         $("#koshaPdfStats").textContent =
-          `로컬 PDF ${st.local_pdfs ?? lib.local_pdfs ?? "?"} · 인덱스 ${st.docs || 0}문서 / ${st.chunks || 0}청크 · 카탈로그 ${lib.catalog_total || "?"}건`;
+          `로컬 ${st.local_pdfs ?? lib.local_pdfs ?? "?"} · 인덱스 ${st.docs || 0}문서 / ${st.chunks || 0}청크 · 카탈로그 ${lib.catalog_total || "?"}${r2}`;
         const cnt = $("#koshaLibCount");
         if (cnt) {
           cnt.textContent = q
@@ -1096,7 +1111,11 @@
 
     function scheduleKoshaLibSearch() {
       clearTimeout(koshaLibTimer);
-      koshaLibTimer = setTimeout(refreshKoshaPdfPanel, 220);
+      // 입력 중에는 목록만 (통계 API 재호출 없음)
+      koshaLibTimer = setTimeout(
+        () => refreshKoshaPdfPanel({ onlyList: true }),
+        180
+      );
     }
 
     function openKoshaPdf() {
@@ -1105,12 +1124,10 @@
         koshaPdfMsg.className = "";
       }
       koshaPdfModal.classList.remove("hidden");
-      // 기본: 로컬 PDF 목록 (받은 파일 위주)
       const scopeEl = $("#koshaLibScope");
-      if (scopeEl && !($("#koshaLibQ") && $("#koshaLibQ").value.trim())) {
-        scopeEl.value = "local";
-      }
-      refreshKoshaPdfPanel();
+      if (scopeEl) scopeEl.value = "all";
+      koshaStatsCache = null; // 열 때 통계 1회 갱신
+      refreshKoshaPdfPanel({ onlyList: false });
       setTimeout(() => $("#koshaLibQ")?.focus(), 50);
     }
     function closeKoshaPdf() {

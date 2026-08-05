@@ -64,8 +64,11 @@ async def kosha_search(
 @router.get("/kosha/pdf/stats")
 async def kosha_pdf_stats():
     from ..kosha.pdf_pipeline import index_stats
+    from ..kosha.r2 import r2_enabled
 
-    return index_stats()
+    st = index_stats()
+    st["r2_pdfs"] = r2_enabled()
+    return st
 
 
 @router.get("/kosha/pdf/file/{code}")
