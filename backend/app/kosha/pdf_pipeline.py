@@ -88,11 +88,15 @@ def local_pdf_path(code: str) -> Path | None:
 
 
 def local_pdf_url(code: str) -> str | None:
-    """브라우저에서 바로 열 수 있는 로컬 PDF URL."""
+    """브라우저에서 바로 열 수 있는 PDF URL (로컬 또는 R2)."""
     if local_pdf_path(code):
-        # 페이지 앵커는 뷰어마다 다르지만 파일은 바로 열림
         return f"/api/kosha/pdf/file/{code}"
-    return None
+    try:
+        from .r2 import resolve_pdf_url
+
+        return resolve_pdf_url(code)
+    except Exception:
+        return None
 
 
 def _normalize_pdf_text(text: str) -> str:

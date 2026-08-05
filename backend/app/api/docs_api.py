@@ -70,22 +70,34 @@ async def kosha_pdf_stats():
 
 @router.get("/kosha/pdf/file/{code}")
 async def kosha_pdf_file(code: str):
-    """저장된 원문 PDF 바로 보기 (브라우저 내장 뷰어)."""
-    from fastapi.responses import FileResponse
+    """원문 PDF 보기 — 로컬 파일 우선, 없으면 R2 presigned 리다이렉트."""
+    from fastapi.responses import FileResponse, RedirectResponse
 
     from ..kosha.pdf_pipeline import local_pdf_path
+    from ..kosha.r2 import presigned_pdf_url, public_pdf_url, r2_enabled
 
     safe = _safe_code(code)
     path = local_pdf_path(safe) or local_pdf_path(code)
-    if not path:
-        raise HTTPException(404, f"로컬 PDF 없음: {code}")
-    return FileResponse(
-        path,
-        media_type="application/pdf",
-        filename=f"{safe}.pdf",
-        content_disposition_type="inline",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
+    if path:
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            filename=f"{safe}.pdf",
+            content_disposition_type="inline",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    pub = public_pdf_url(safe) or public_pdf_url(code)
+    if pub:
+        return RedirectResponse(pub, status_code=302)
+
+    if r2_enabled():
+        url = presigned_pdf_url(safe) or presigned_pdf_url(code)
+        if url:
+            return RedirectResponse(url, status_code=302)
+        raise HTTPException(404, f"R2 PDF 없음 또는 서명 실패: {code}")
+
+    raise HTTPException(404, f"PDF 없음 (로컬·R2 미설정): {code}")
 
 
 @router.get("/kosha/pdf/priority")

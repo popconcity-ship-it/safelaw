@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     # (선택) 원격에서 관리 API 쓸 때만. 비우면 로컬(127.0.0.1)만 관리 가능 — 보통 이게 전부.
     admin_token: str = ""
 
+    # Cloudflare R2 (KOSHA PDF). 비공개 버킷이면 presigned URL 사용.
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket: str = "qbank-raw"
+    r2_kosha_prefix: str = "safelaw/kosha/pdfs"
+    r2_presign_ttl: int = 3600
+    # (선택) 공개 직링크 베이스. 예: https://pub-xxx.r2.dev/safelaw/kosha/pdfs
+    # 설정 시 프리사인 대신 이 URL 사용.
+    kosha_pdf_base_url: str = ""
+
     cache_article_ttl: int = 86400
     cache_search_ttl: int = 3600
 
