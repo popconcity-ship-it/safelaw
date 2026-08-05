@@ -385,8 +385,9 @@
       list-style: none;
       cursor: pointer;
       padding: 10px 12px;
-      display: grid;
-      gap: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
       user-select: none;
     }
     .law-card > summary::-webkit-details-marker { display: none; }
@@ -449,21 +450,25 @@
       transition: box-shadow 0.2s;
     }
     .law-body {
-      padding: 0 12px 12px;
+      padding: 10px 12px 12px;
       border-top: 1px solid var(--border);
       margin: 0;
       font-size: 0.86rem;
       line-height: 1.55;
       color: #1e293b;
-      white-space: pre-wrap;
-      max-height: 420px;
+      white-space: normal;
+      /* 내용 높이만큼만 — 빈 박스처럼 넓게 두지 않음. 길 때만 스크롤 */
+      max-height: min(50vh, 360px);
       overflow-y: auto;
       background: #fff;
     }
+    .law-body:empty {
+      display: none;
+    }
     .law-body p { margin: 0 0 0.55em; }
     .law-body .hang {
-      margin: 0.45em 0;
-      padding-left: 0.1em;
+      margin: 0.35em 0;
+      padding-left: 0;
     }
     .msg.bot .meta {
       margin-top: 10px;
@@ -889,17 +894,16 @@
     /** 본문 HTML — 항(①②) 단위로 약간 띄움 */
     function lawBodyHtml(body) {
       let t = String(body || "").replace(/\r/g, "").trim();
+      if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       t = t.replace(/\n{3,}/g, "\n\n");
       // 항 기호 앞에서 줄바꿈 보정
       t = t.replace(/\s*([①②③④⑤⑥⑦⑧⑨⑩])/g, "\n$1");
       const parts = t.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!parts.length) {
+        return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
+      }
       return parts
-        .map((line) => {
-          if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(line)) {
-            return `<div class="hang">${esc(line)}</div>`;
-          }
-          return `<div class="hang">${esc(line)}</div>`;
-        })
+        .map((line) => `<div class="hang">${esc(line)}</div>`)
         .join("");
     }
 
@@ -910,20 +914,21 @@
         const art = String(a.article_no || "").replace(/\s/g, "");
         const cite = `[${a.law_name || ""} 제${art}조]`;
         const title = a.title || "";
-        const prev = lawPreview(a.body || "", 150);
-        const open = i === 0 ? " open" : "";
-        return `<details class="law-card" id="law-card-${esc(art)}" data-art="${esc(art)}"${open}>
+        const body = a.body || "";
+        const prev = lawPreview(body, 150);
+        // 기본은 접어 둠 — 인용 클릭/요약 탭 시에만 펼침 (빈 큰 박스 방지)
+        return `<details class="law-card" id="law-card-${esc(art)}" data-art="${esc(art)}">
           <summary>
             <span class="law-cite-label">${esc(cite)}</span>
             ${title ? `<span class="law-atitle">${esc(title)}</span>` : ""}
             ${prev ? `<span class="law-preview">${esc(prev)}</span>` : ""}
           </summary>
-          <div class="law-body">${lawBodyHtml(a.body || "(본문 없음)")}</div>
+          <div class="law-body">${lawBodyHtml(body)}</div>
         </details>`;
       }).join("");
       return `<div class="law-section">
         <div class="law-section-title">관련 법령</div>
-        <p class="law-section-hint">본문의 조문 번호를 누르거나, 카드를 펼쳐 전문을 보세요 · ${articles.length}건</p>
+        <p class="law-section-hint">조문 번호 또는 카드를 누르면 전문이 펼쳐집니다 · ${articles.length}건</p>
         ${cards}
       </div>`;
     }
