@@ -257,10 +257,14 @@ class Orchestrator:
             "gemini-2.0-flash-lite",
             "gemini-2.5-flash",
             "gemini-flash-latest",
-            "gemini-2.5-flash-preview-05-20",
         ]
         # 알려진 미지원/폐기 모델 제외
-        banned = {"gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"}
+        banned = {
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-pro",
+            "gemini-2.5-flash-preview-05-20",  # 404
+        }
         seen: set[str] = set()
         out: list[str] = []
         for m in fallbacks:
@@ -386,6 +390,11 @@ class Orchestrator:
                     if not text:
                         last_err = f"empty response on {model}"
                         continue
+                    # 조문이 있는데 모델이 "답변 불가"만 하면 검색 폴백 사용
+                    if articles and self._llm_refused(text):
+                        last_err = f"refusal-like answer on {model}"
+                        logger.warning("Gemini refusal with articles present, fallback")
+                        continue
                     return text
         except Exception as e:
             logger.exception("Gemini error: %s", e)
@@ -394,11 +403,30 @@ class Orchestrator:
         # LLM 실패해도 조문 + KOSHA PDF 검색 결과는 반드시 제공
         reason = "할당량 초과 (HTTP 429)" if saw_429 else "호출 실패"
         note = (
-            f"\n\n---\n**⚠ Gemini {reason}**\n"
-            "검색된 **법령 조문 + KOSHA GUIDE(PDF 본문 포함)** 으로 답변합니다.\n"
-            f"_(detail: {last_err[:200]})_"
+            f"\n\n---\n_AI 요약 일시 불가({reason}) · "
+            "아래는 검색된 조문·가이드 기반 안내입니다._"
         )
         return demo_answer(message, articles, kosha_hits) + note
+
+    @staticmethod
+    def _llm_refused(text: str) -> bool:
+        """근거 조문이 있는데도 모델이 답변 거부만 한 경우."""
+        t = (text or "").strip()
+        if len(t) > 900:
+            return False
+        markers = (
+            "답변을 제공할 수 없",
+            "법적 답변을 제공",
+            "조문이 검색되지 않",
+            "근거 조문]이 없어",
+            "근거 조문이 없어",
+            "확인할 수 없습니다",
+            "불완전하고",
+        )
+        hits = sum(1 for m in markers if m in t)
+        return hits >= 2 or (
+            hits >= 1 and "제" not in t and "조" not in t[:200]
+        )
 
     async def _openai(
         self,

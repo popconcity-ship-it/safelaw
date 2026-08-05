@@ -252,32 +252,37 @@
 
     .msg {
       max-width: min(92%, 100%);
-      width: auto;
       padding: 12px 14px;
       border-radius: var(--radius);
       font-size: 0.93rem;
       white-space: pre-wrap;
-      /* PDF 무공백 한글도 화면 안에서 줄바꿈 (가로 스크롤 방지) */
-      overflow-wrap: anywhere;
-      word-break: break-word;
-      word-wrap: break-word;
-      overflow-x: hidden;
-      min-width: 0;
       box-sizing: border-box;
     }
+    /* 사용자 말풍선: 한글 한 글자씩 세로로 깨지지 않게 */
     .msg.user {
       align-self: flex-end;
+      width: fit-content;
+      max-width: min(85%, 520px);
+      min-width: 3.5rem;
       background: var(--accent-dim);
       border: 1px solid #93c5fd;
       color: #1e3a5f;
+      /* keep-all: 한글 단어 중간 강제 개행 방지 */
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      line-height: 1.45;
     }
     .msg.bot {
       align-self: flex-start;
       max-width: 100%;
       width: 100%;
+      min-width: 0;
       background: var(--surface);
       border: 1px solid var(--border);
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      overflow-x: hidden;
     }
     .msg.bot a {
       word-break: break-all;
