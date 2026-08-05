@@ -17,7 +17,7 @@ from ..documents.generator import (
 )
 from ..kosha.search import format_kosha_block, search_kosha
 from ..law.client import LawClient
-from ..law.verify import verify_citations
+from ..law.verify import extract_citations
 from ..models.schemas import (
     Article,
     ChatResponse,
@@ -73,11 +73,25 @@ class Orchestrator:
         history: list[dict[str, str]] | None = None,
         workplace: dict[str, Any] | None = None,
     ) -> ChatResponse:
+        import asyncio
+
         intent = classify_intent(message)
-        articles = await self.law.get_articles_for_query(message, limit=4)
-        # 답변 카드는 2~3개면 충분 (과다 나열 방지)
-        kosha_limit = 3 if intent in ("kosha", "risk_assessment", "education") else 2
-        kosha_hits = search_kosha(message, limit=kosha_limit)
+        # 조문 검색(async) + KOSHA 검색(sync) 병렬
+        want_pdf = intent in ("kosha", "risk_assessment", "education", "general")
+        kosha_limit = 3 if want_pdf else 2
+
+        async def _kosha() -> list:
+            return await asyncio.to_thread(
+                search_kosha,
+                message,
+                limit=kosha_limit,
+                include_pdf=want_pdf,
+            )
+
+        articles, kosha_hits = await asyncio.gather(
+            self.law.get_articles_for_query(message, limit=4),
+            _kosha(),
+        )
         from ..kosha.pdf_pipeline import local_pdf_url
 
         kosha_sources = [
@@ -118,8 +132,6 @@ class Orchestrator:
                 markdown=doc.markdown,
                 used_llm=doc.used_llm,
             )
-            from ..kosha.pdf_pipeline import local_pdf_url
-
             kosha_sources = [
                 KoshaSource(
                     id=k.id,
@@ -144,17 +156,19 @@ class Orchestrator:
         elif self.settings.use_demo_llm:
             answer = demo_answer(message, articles, kosha_hits)
         else:
+            # LLM용 KOSHA 블록은 짧게 (토큰·지연 감소)
+            short_kosha = format_kosha_block(kosha_hits[:2]) if kosha_hits else None
             answer = await self._generate_llm(
                 message,
                 articles,
                 history or [],
                 workplace,
                 kosha_hits=kosha_hits,
-                kosha_block=format_kosha_block(kosha_hits) if kosha_hits else None,
+                kosha_block=short_kosha,
             )
 
-        citations = await verify_citations(answer, self.law)
-        # 문서 본문은 템플릿이라 조문 인용이 약할 수 있음 — 조문 목록은 articles로 표시
+        # 인용 재조회(법제처)는 느림 → 이미 확보한 조문으로 가벼운 검증만
+        citations = self._citations_from_articles(answer, articles)
         if not document_payload:
             answer = self._append_failed_citation_note(answer, citations)
 
@@ -167,6 +181,90 @@ class Orchestrator:
             intent=intent,
             demo=self.settings.use_demo_law or self.settings.use_demo_llm,
         )
+
+    @staticmethod
+    def _citations_from_articles(
+        answer: str, articles: list[Article]
+    ) -> list[CitationResult]:
+        """네트워크 없이 답변 인용 vs 이번 검색 조문만 교차 확인."""
+        extracted = extract_citations(answer or "")
+        results: list[CitationResult] = []
+        seen: set[tuple[str, str]] = set()
+
+        def _norm(s: str) -> str:
+            return re.sub(r"\s+", "", (s or "").replace("·", "ㆍ").replace("‧", "ㆍ"))
+
+        for c in extracted:
+            law = c.get("law_name") or ""
+            art = str(c.get("article_no") or "")
+            key = (_norm(law), art)
+            if key in seen:
+                continue
+            seen.add(key)
+            matched: Article | None = None
+            law_n = _norm(law)
+            for a in articles:
+                if str(a.article_no) != art:
+                    continue
+                an = _norm(a.law_name)
+                if not law_n or law_n in an or an in law_n:
+                    matched = a
+                    break
+                # 약칭: 산안법 / 중처법 등 부분 일치
+                if len(law_n) >= 2 and (law_n[:4] in an or an[:4] in law_n):
+                    matched = a
+                    break
+            if matched:
+                src = matched.source
+                status = "demo" if src in ("demo", "corpus", "cache") else "verified"
+                if src == "law_api":
+                    status = "verified"
+                elif src == "corpus":
+                    status = "verified"  # 로컬 전문 코퍼스 일치
+                results.append(
+                    CitationResult(
+                        raw=c.get("raw") or f"{matched.law_name} 제{matched.article_no}조",
+                        law_name=matched.law_name,
+                        article_no=matched.article_no,
+                        hang=c.get("hang"),
+                        status=status,
+                        official_title=matched.title or None,
+                        message=(
+                            f"「{matched.law_name}」 제{matched.article_no}조"
+                            + (f"({matched.title})" if matched.title else "")
+                            + " — 검색 조문과 일치"
+                        ),
+                    )
+                )
+            else:
+                results.append(
+                    CitationResult(
+                        raw=c.get("raw") or f"{law} 제{art}조",
+                        law_name=law or None,
+                        article_no=art or None,
+                        hang=c.get("hang"),
+                        status="unclear",
+                        message=(
+                            f"「{law}」 제{art}조 — 이번 검색 조문에 없어 "
+                            "원문 확인 권장 (네트워크 재조회 생략)"
+                        ),
+                    )
+                )
+
+        # 본문에 인용이 없어도 사용한 조문은 출처로 표시
+        if not results:
+            for a in articles[:4]:
+                results.append(
+                    CitationResult(
+                        raw=f"{a.law_name} 제{a.article_no}조",
+                        law_name=a.law_name,
+                        article_no=a.article_no,
+                        status="verified" if a.source != "demo" else "demo",
+                        official_title=a.title or None,
+                        message=f"「{a.law_name}」 제{a.article_no}조 — 검색에 사용",
+                    )
+                )
+        return results
 
     async def generate_document_supplement(
         self,
@@ -465,11 +563,12 @@ class Orchestrator:
         )
 
     def _groq_model_candidates(self) -> list[str]:
-        primary = (self.settings.groq_model or "llama-3.3-70b-versatile").strip()
+        # 기본: 8b-instant (무료 티어 체감 지연 최소). 품질 필요 시 GROQ_MODEL=llama-3.3-70b-versatile
+        primary = (self.settings.groq_model or "llama-3.1-8b-instant").strip()
         fallbacks = [
             primary,
-            "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
+            "llama-3.3-70b-versatile",
             "gemma2-9b-it",
         ]
         seen: set[str] = set()
@@ -478,7 +577,8 @@ class Orchestrator:
             if m and m not in seen:
                 seen.add(m)
                 out.append(m)
-        return out
+        # 최대 2모델만 — 연쇄 폴백이 지연 폭증
+        return out[:2]
 
     async def _groq(
         self,
@@ -496,9 +596,12 @@ class Orchestrator:
         client = AsyncOpenAI(
             api_key=self.settings.groq_api_key.strip(),
             base_url="https://api.groq.com/openai/v1",
+            timeout=20.0,
         )
+        # 히스토리 짧게 — 토큰·지연 절감
+        short_history = (history or [])[-2:]
         messages = self._build_messages(
-            message, articles, history or [], workplace, kosha_block=kosha_block
+            message, articles, short_history, workplace, kosha_block=kosha_block
         )
         last_err = ""
         try:
@@ -508,7 +611,7 @@ class Orchestrator:
                         model=model,
                         messages=messages,
                         temperature=0.2,
-                        max_tokens=1200,
+                        max_tokens=900,
                     )
                     text = (resp.choices[0].message.content or "").strip()
                     if not text:

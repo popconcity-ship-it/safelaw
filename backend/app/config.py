@@ -38,7 +38,8 @@ class Settings(BaseSettings):
 
     # LLM — Groq(무료 티어) 우선 → Gemini → OpenAI
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
+    # 무료 티어 기본: 빠른 8B. 품질 우선이면 llama-3.3-70b-versatile
+    groq_model: str = "llama-3.1-8b-instant"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     openai_api_key: str = ""

@@ -1558,6 +1558,13 @@
       sending = true;
       sendBtn.disabled = true;
       const pending = addMsg("bot", '<span class="typing">조문·가이드 조회 중…</span>');
+      // 1.2초 넘기면 LLM 단계 문구 (조회 자체는 보통 0.1~0.5초)
+      const stageTimer = setTimeout(() => {
+        if (pending.querySelector(".typing")) {
+          pending.innerHTML =
+            '<span class="typing">조문 확보 · 답변 작성 중…</span>';
+        }
+      }, 1200);
 
       try {
         const r = await fetch("/api/chat", {
@@ -1595,6 +1602,7 @@
         pending.innerHTML = "요청에 실패했습니다. 서버가 실행 중인지 확인해 주세요.<br/><span class='meta'>" + esc(String(e)) + "</span>";
         requestAnimationFrame(() => scrollToMsgStart(pending));
       } finally {
+        clearTimeout(stageTimer);
         sending = false;
         sendBtn.disabled = false;
         input.focus({ preventScroll: true });

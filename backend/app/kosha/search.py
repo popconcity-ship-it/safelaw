@@ -132,8 +132,13 @@ def search_kosha(
     *,
     industry: str | None = None,
     limit: int = 6,
+    include_pdf: bool = True,
 ) -> list[KoshaHit]:
-    """PDF 본문 + 시드 요약 + 전체 카탈로그(1,352) 병합 검색."""
+    """PDF 본문 + 시드 요약 + 전체 카탈로그(1,352) 병합 검색.
+
+    include_pdf=False 면 32k 청크 스캔을 건너뛰어 체감 지연을 줄인다
+    (법조문 중심 질문용).
+    """
     q = (query or "").strip()
     if not q:
         return []
@@ -146,15 +151,17 @@ def search_kosha(
     except Exception:
         catalog = []
 
-    try:
-        from .pdf_pipeline import search_pdf_hits
+    pdf_hits: list[KoshaHit] = []
+    if include_pdf:
+        try:
+            from .pdf_pipeline import search_pdf_hits
 
-        # PDF 본문 인용 우선
-        pdf_hits = search_pdf_hits(q, limit=max(4, limit))
-        for h in pdf_hits:
-            h.score += 5.0  # PDF 본문 최우선
-    except Exception:
-        pdf_hits = []
+            # PDF 본문 인용 우선
+            pdf_hits = search_pdf_hits(q, limit=max(4, limit))
+            for h in pdf_hits:
+                h.score += 5.0  # PDF 본문 최우선
+        except Exception:
+            pdf_hits = []
 
     # PDF 먼저 채우고, 나머지로 보강
     merged: list[KoshaHit] = []

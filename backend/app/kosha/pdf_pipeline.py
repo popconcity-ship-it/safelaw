@@ -251,9 +251,17 @@ def _load_all_chunks_raw() -> list[dict]:
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
+                obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            # 검색 시마다 .lower() 하지 않도록 사전 정규화
+            text = obj.get("text") or ""
+            title = obj.get("title") or ""
+            code = obj.get("code") or ""
+            obj["_text_l"] = text.lower()
+            obj["_title_l"] = title.lower()
+            obj["_code_l"] = code.lower()
+            out.append(obj)
     _chunks_cache = out
     _chunks_mtime = mtime
     return out
@@ -381,13 +389,15 @@ def search_pdf_chunks(query: str, limit: int = 4) -> list[TextChunk]:
 
     scored: list[TextChunk] = []
     for c in _load_all_chunks_raw():
-        text = (c.get("text") or "").lower()
+        text = c.get("_text_l") or (c.get("text") or "").lower()
         code = (c.get("code") or "")
         title = (c.get("title") or "")
         if title in ("", code):
             title = cat_titles.get(code, title)
-        title_l = title.lower()
-        code_l = code.lower()
+        title_l = c.get("_title_l") if title == (c.get("title") or "") else title.lower()
+        if title in ("", code) and code in cat_titles:
+            title_l = cat_titles[code].lower()
+        code_l = c.get("_code_l") or code.lower()
         if not text:
             continue
         score = 0.0

@@ -294,7 +294,7 @@ class LawClient:
                 return
             articles.append(a)
 
-        # 1) 명시적 "제N조" 패턴
+        # 1) 명시적 "제N조" 패턴 — 코퍼스 우선 (네트워크 0)
         explicit = re.findall(
             r"([가-힣A-Za-zㆍ·\s]{2,40}?)\s*제\s*(\d+)(?:\s*조|\s*의\s*(\d+))?",
             expanded,
@@ -302,47 +302,77 @@ class LawClient:
         for law_hint, main, sub in explicit[:limit]:
             law_hint = law_hint.strip()
             art = f"{main}의{sub}" if sub else main
-            if len(law_hint) < 2:
-                hits = await self.search_law(expanded, display=5)
-                law_name = hits[0].law_name if hits else "산업안전보건법"
+            law_name = law_hint if len(law_hint) >= 2 else "산업안전보건법"
+            cached = None
+            for hit in search_corpus(f"{law_name} 제{art}조", limit=5):
+                if str(hit.get("article_no")) == str(art):
+                    if not law_hint or law_name in (hit.get("law_name") or "") or (
+                        hit.get("law_name") or ""
+                    ) in law_name:
+                        cached = hit
+                        break
+            if cached:
+                _append(
+                    Article(
+                        law_name=cached["law_name"],
+                        article_no=str(cached["article_no"]),
+                        title=cached.get("title") or "",
+                        body=cached.get("body") or "",
+                        mst=cached.get("mst"),
+                        source="corpus",
+                    )
+                )
             else:
-                law_name = law_hint
-            _append(await self.get_article(law_name, art))
+                # 코퍼스에 없을 때만 법제처 (느림)
+                if len(law_hint) < 2:
+                    hits = await self.search_law(expanded, display=5)
+                    law_name = hits[0].law_name if hits else "산업안전보건법"
+                _append(await self.get_article(law_name, art))
 
         if articles:
             return articles[:limit]
 
-        # 2) 로컬 코퍼스 전문검색 — 키워드 하나하나 맵핑 불필요
+        # 2) 로컬 코퍼스 전문검색 — 본문 그대로 사용 (법제처 재조회는 느림 → 생략)
         corpus_hits = search_corpus(expanded, limit=max(limit, 6))
         for hit in corpus_hits:
-            # 가능하면 법제처 단건으로 재조회(최신), 실패 시 코퍼스 본문
-            a = await self.get_article(
-                hit["law_name"],
-                str(hit["article_no"]),
-                mst=hit.get("mst"),
-            )
-            if a:
-                _append(a)
-            else:
-                _append(
-                    Article(
-                        law_name=hit["law_name"],
-                        article_no=str(hit["article_no"]),
-                        title=hit.get("title") or "",
-                        body=hit.get("body") or "",
-                        mst=hit.get("mst"),
-                        source="corpus",
-                    )
+            _append(
+                Article(
+                    law_name=hit["law_name"],
+                    article_no=str(hit["article_no"]),
+                    title=hit.get("title") or "",
+                    body=hit.get("body") or "",
+                    mst=hit.get("mst"),
+                    source="corpus",
                 )
+            )
             if len(articles) >= limit:
                 break
 
         if articles:
             return articles[:limit]
 
-        # 3) 코퍼스 미구축·무매칭 시 주제 맵 보강
+        # 3) 코퍼스 미구축·무매칭 시 주제 맵 → 코퍼스/데모만 (네트워크 최소화)
         for law, art in match_topic_articles(expanded):
-            _append(await self.get_article(law, art))
+            # 캐시에 있으면 사용, 없으면 데모/단건 (단건은 최후)
+            cached = None
+            for hit in search_corpus(f"{law} 제{art}조", limit=3):
+                if str(hit.get("article_no")) == str(art) or law in (hit.get("law_name") or ""):
+                    if str(hit.get("article_no")) == str(art) or art in str(hit.get("article_no")):
+                        cached = hit
+                        break
+            if cached:
+                _append(
+                    Article(
+                        law_name=cached["law_name"],
+                        article_no=str(cached["article_no"]),
+                        title=cached.get("title") or "",
+                        body=cached.get("body") or "",
+                        mst=cached.get("mst"),
+                        source="corpus",
+                    )
+                )
+            else:
+                _append(await self.get_article(law, art))
             if len(articles) >= limit:
                 break
 

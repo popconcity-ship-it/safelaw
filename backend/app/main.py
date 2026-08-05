@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,12 +23,35 @@ from .api.settings import router as settings_router
 from .config import get_settings
 from .models.schemas import HealthResponse
 
+logger = logging.getLogger(__name__)
+
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """기동 시 코퍼스·KOSHA 인덱스 워밍 — 첫 질문 콜드 로드 제거."""
+    try:
+        from .law.corpus import load_corpus
+        from .kosha.catalog import load_catalog
+        from .kosha.pdf_pipeline import _load_all_chunks_raw
+
+        n_law = len(load_corpus())
+        n_cat = len(load_catalog())
+        n_ch = len(_load_all_chunks_raw())
+        logger.info(
+            "warmup done: corpus=%s catalog=%s chunks=%s", n_law, n_cat, n_ch
+        )
+    except Exception as e:
+        logger.warning("warmup skipped: %s", e)
+    yield
+
 
 app = FastAPI(
     title="SafeLaw",
     description="산업안전 특화 법규 AI — 조문 인용 + 환각 검증",
     version=__version__,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
