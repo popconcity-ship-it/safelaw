@@ -467,6 +467,51 @@
     .msg.bot .law-card.flash {
       box-shadow: 0 0 0 2px #3b82f6;
     }
+    .msg.bot .kosha-section {
+      margin: 12px 0 6px;
+    }
+    .msg.bot .kosha-card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      padding: 10px 12px;
+      margin: 0 0 8px;
+    }
+    .msg.bot .kosha-card-hd {
+      font-size: 0.88rem;
+      font-weight: 650;
+      color: #1e3a5f;
+      line-height: 1.35;
+    }
+    .msg.bot .kosha-card-hd code {
+      font-size: 0.85em;
+      background: var(--surface2);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .msg.bot .kosha-card-ex {
+      margin-top: 6px;
+      font-size: 0.82rem;
+      color: #475569;
+      line-height: 1.45;
+      border-left: 3px solid #93c5fd;
+      padding: 4px 0 4px 10px;
+      background: #f8fafc;
+      border-radius: 0 8px 8px 0;
+    }
+    .msg.bot .kosha-card-links {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 0.82rem;
+    }
+    .msg.bot .kosha-card-links a {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .msg.bot .kosha-card-links a:hover { text-decoration: underline; }
     .msg.bot .meta {
       margin-top: 10px;
       padding-top: 10px;
@@ -880,20 +925,52 @@
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
 
-    /** 결론 → 법령 카드 → KOSHA 순으로 조립 */
-    function renderBotAnswer(answer, articles) {
-      const raw = answer || "";
-      const m = raw.match(/^([\s\S]*?)(?=^### KOSHA GUIDE\s*$)/m);
-      let head = raw;
-      let kosha = "";
-      if (m) {
-        head = m[1];
-        kosha = raw.slice(m[1].length);
-      }
+    /** KOSHA 검색 결과 카드 (발췌 + PDF 링크) — LLM 유무와 무관하게 항상 표시 */
+    function renderKoshaCards(sources) {
+      if (!sources || !sources.length) return "";
+      const cards = sources
+        .map((k) => {
+          const code = k.code || "";
+          const title = k.title || code;
+          const pdf =
+            k.pdf_url ||
+            (code ? "/api/kosha/pdf/file/" + encodeURIComponent(code) : "");
+          let ex = (k.summary || "").trim();
+          if (ex.length > 220) ex = ex.slice(0, 220).replace(/\s+\S*$/, "") + "…";
+          return (
+            `<div class="kosha-card">` +
+            `<div class="kosha-card-hd"><code>${esc(code)}</code> ${esc(title)}</div>` +
+            (ex ? `<div class="kosha-card-ex">${esc(ex)}</div>` : "") +
+            `<div class="kosha-card-links">` +
+            (pdf
+              ? `<a href="${esc(pdf)}" target="_blank" rel="noopener">📄 원문 PDF</a>`
+              : "") +
+            (k.url && String(k.url).startsWith("http")
+              ? `<a href="${esc(k.url)}" target="_blank" rel="noopener">산업안전포털</a>`
+              : "") +
+            `</div></div>`
+          );
+        })
+        .join("");
       return (
-        lightMd(head) +
+        `<div class="kosha-section">` +
+        `<div class="law-section-title">KOSHA GUIDE</div>` +
+        `<p class="law-section-hint">관련 기술지침 · PDF로 원문 확인</p>` +
+        cards +
+        `</div>`
+      );
+    }
+
+    /** 결론(LLM/요약) → 법령 카드 → KOSHA 카드 */
+    function renderBotAnswer(answer, articles, koshaSources) {
+      let raw = answer || "";
+      // LLM/템플릿에 섞인 KOSHA 장문 섹션 제거 (카드로 대체)
+      raw = raw.replace(/\n*###\s*KOSHA GUIDE[\s\S]*$/i, "").trim();
+      raw = raw.replace(/\n*참고로,\s*KOSHA[\s\S]*?(?=\n*참고용|$)/i, "").trim();
+      return (
+        lightMd(raw) +
         renderLawCards(articles) +
-        (kosha ? lightMd(kosha) : "")
+        renderKoshaCards(koshaSources)
       );
     }
 
@@ -1443,8 +1520,10 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
         const arts = data.articles_used || [];
-        // 결론 → 법령 카드 → KOSHA 순
-        pending.innerHTML = renderBotAnswer(data.answer, arts) + renderMeta(data);
+        const koshaSrc = data.kosha_sources || [];
+        // 결론 → 법령 카드 → KOSHA 카드(PDF)
+        pending.innerHTML =
+          renderBotAnswer(data.answer, arts, koshaSrc) + renderMeta(data);
         pending.querySelectorAll("[data-copy]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const doc = window.__docs?.[btn.getAttribute("data-copy")];
