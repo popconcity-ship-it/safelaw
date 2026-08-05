@@ -25,30 +25,46 @@ GEMINI_MODEL=gemini-2.0-flash
 DEMO_MODE=auto
 ```
 
-## A) Railway (추천 · GitHub 연동)
+## A) Render 무료 (현재 권장 · 테스트용)
 
-1. https://railway.app 로그인 (GitHub)
-2. **New Project** → **Deploy from GitHub repo** → `safelaw`
-3. Variables 에 위 키 추가
-4. 생성되는 `*.up.railway.app` URL 접속
-5. `/api/health` 가 `{"status":"ok",...}` 이면 성공
+**잠자기:** 약 15분 무접속 시 서버 절전 → 다음 접속 시 30초~1분 지연 (테스트 감수).
 
-CLI (선택):
+### 클릭 배포 (Blueprint)
 
-```bash
-npm i -g @railway/cli
-railway login
-cd ~/Documents/safelaw
-railway init
-railway up
-railway variables set GEMINI_API_KEY=... LAW_OC=...
+1. https://dashboard.render.com 가입 (GitHub 로그인)
+2. **New** → **Blueprint**
+3. 저장소 **`popconcity-ship-it/safelaw`** 연결 (Private이면 Render에 GitHub 권한 허용)
+4. `render.yaml` 감지 → **Apply**
+5. 서비스 **Environment** 에 키 입력 후 저장 (Redeploy):
+
+```text
+GEMINI_API_KEY=...
+LAW_OC=...
+DATA_GO_KR_KEY=...   # 선택
+GEMINI_MODEL=gemini-2.0-flash
+DEMO_MODE=auto
 ```
 
-## B) Render
+6. 배포 완료 후 URL: `https://safelaw-xxxx.onrender.com`
+7. 확인: `https://…/api/health`
 
-1. https://dashboard.render.com → **New** → **Blueprint**
-2. 이 저장소 연결 (`render.yaml` 사용)
-3. Environment 에 키 입력 후 Deploy
+원클릭 시도 (로그인 필요):
+
+https://dashboard.render.com/blueprint/new?repo=https%3A%2F%2Fgithub.com%2Fpopconcity-ship-it%2Fsafelaw
+
+### CLI (선택)
+
+```bash
+brew install render   # 또는 Render 문서의 CLI
+render login
+# 대시보드 Blueprint가 더 단순함
+```
+
+## B) Railway (대안)
+
+1. https://railway.app → GitHub → `safelaw`
+2. Variables 에 동일 키
+3. 체험 크레딧 후 유료 성향 — 테스트 무료면 Render 우선
 
 ## C) 로컬 Docker (검증)
 

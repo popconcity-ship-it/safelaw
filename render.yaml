@@ -1,19 +1,28 @@
-# Render Blueprint — https://dashboard.render.com → New → Blueprint
+# Render Blueprint — SafeLaw (무료 웹 서비스)
+# 대시보드: New → Blueprint → 이 저장소 선택
+# https://dashboard.render.com/blueprint/new
+#
+# 주의: free 플랜은 약 15분 무접속 시 잠자기 → 다음 접속 30초~1분 지연
+
 services:
   - type: web
     name: safelaw
     runtime: docker
     dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
+    region: singapore
+    # 헬스체크 (기동 후 /api/health)
     healthCheckPath: /api/health
     envVars:
       - key: DEMO_MODE
         value: auto
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      # 아래는 Blueprint 생성 후 Dashboard → Environment 에 직접 입력
       - key: GEMINI_API_KEY
         sync: false
       - key: LAW_OC
         sync: false
       - key: DATA_GO_KR_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-2.0-flash
