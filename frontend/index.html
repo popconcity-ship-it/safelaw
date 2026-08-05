@@ -375,69 +375,83 @@
       color: var(--muted);
       margin: 0 0 2px;
     }
-    /* 조문 카드 — details 대신 버튼 토글 (빈 여백·잘림 방지) */
-    .law-card {
+    /* 조문 카드 — 단순 헤더+본문 (빈 박스·잘림 방지) */
+    .msg.bot .law-section { margin: 10px 0 6px; }
+    .msg.bot .law-section-title {
+      font-size: 0.95rem;
+      font-weight: 650;
+      color: #1e40af;
+      margin: 0 0 2px;
+    }
+    .msg.bot .law-section-hint {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin: 0 0 8px;
+    }
+    .msg.bot .law-card {
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: #f8fafc;
+      background: #fff;
+      margin: 0 0 8px;
       overflow: hidden;
     }
-    .law-card + .law-card { margin-top: 8px; }
-    .law-card-sum {
-      width: 100%;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      padding: 8px 10px;
+    .msg.bot .law-hd {
       display: flex;
-      flex-direction: row;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
+      width: 100%;
+      margin: 0;
+      padding: 10px 12px;
+      border: 0;
+      background: #f8fafc;
+      cursor: pointer;
       text-align: left;
       font: inherit;
       color: inherit;
       box-sizing: border-box;
-    }
-    .law-card-sum:hover { background: #eff6ff; }
-    .law-card-sum-main {
-      flex: 1;
-      min-width: 0;
-    }
-    .law-cite-label {
-      display: block;
-      font-weight: 700;
-      color: #1e3a5f;
-      font-size: 0.9rem;
-      line-height: 1.3;
-    }
-    .law-atitle {
-      display: block;
-      font-size: 0.82rem;
-      color: #334155;
-      line-height: 1.3;
-      margin-top: 1px;
-    }
-    .law-preview {
-      display: block;
-      font-size: 0.78rem;
-      color: #64748b;
+      min-height: 0;
+      height: auto;
+      white-space: normal;
       line-height: 1.35;
+    }
+    .msg.bot .law-hd:hover { background: #eff6ff; }
+    .msg.bot .law-hd-left { flex: 1; min-width: 0; }
+    .msg.bot .law-hd-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: #1e3a5f;
+    }
+    .msg.bot .law-hd-sub {
+      font-size: 0.8rem;
+      color: #475569;
       margin-top: 2px;
     }
-    .law-card.is-open .law-preview { display: none; }
-    .law-card-toggle {
+    .msg.bot .law-hd-action {
       flex: 0 0 auto;
-      font-size: 0.72rem;
-      color: var(--accent);
-      font-weight: 600;
+      font-size: 0.75rem;
+      font-weight: 650;
+      color: #2563eb;
       white-space: nowrap;
-      line-height: 1.3;
-      padding-top: 1px;
     }
-    .law-card.is-open .law-card-toggle::before { content: "▲ 접기"; }
-    .law-card:not(.is-open) .law-card-toggle::before { content: "▼ 전문"; }
-    .law-cite {
+    .msg.bot .law-bd {
+      display: none;
+      padding: 10px 12px 12px;
+      border-top: 1px solid var(--border);
+      font-size: 0.86rem;
+      line-height: 1.5;
+      color: #1e293b;
+      background: #fff;
+    }
+    .msg.bot .law-card.open .law-bd { display: block; }
+    .msg.bot .law-card.open .law-hd { background: #eff6ff; }
+    .msg.bot .law-bd .hang {
+      margin: 0 0 0.45em;
+      overflow-wrap: anywhere;
+      word-break: keep-all;
+    }
+    .msg.bot .law-bd .hang:last-child { margin-bottom: 0; }
+    .msg.bot .law-cite {
       display: inline;
       margin: 0;
       padding: 0 2px;
@@ -448,41 +462,10 @@
       font: inherit;
       font-weight: 650;
       cursor: pointer;
-      border-radius: 2px;
     }
-    .law-cite:hover {
-      background: #dbeafe;
-      border-bottom-color: #1d4ed8;
-    }
-    .law-card.law-card-flash {
-      outline: 2px solid #3b82f6;
-      outline-offset: 0;
-    }
-    .law-body {
-      display: none;
-      padding: 8px 10px 10px;
-      border-top: 1px solid var(--border);
-      margin: 0;
-      font-size: 0.86rem;
-      line-height: 1.5;
-      color: #1e293b;
-      background: #fff;
-      box-sizing: border-box;
-      /* 높이 제한 없음 — 글자 잘림 방지, 페이지 스크롤로 읽기 */
-      max-height: none;
-      overflow: visible;
-    }
-    .law-card.is-open > .law-body {
-      display: block;
-    }
-    .law-body .hang {
-      margin: 0;
-      padding: 0 0 0.4em;
-      overflow-wrap: anywhere;
-      word-break: keep-all;
-    }
-    .law-body .hang:last-child {
-      padding-bottom: 0;
+    .msg.bot .law-cite:hover { background: #dbeafe; }
+    .msg.bot .law-card.flash {
+      box-shadow: 0 0 0 2px #3b82f6;
     }
     .msg.bot .meta {
       margin-top: 10px;
@@ -868,9 +851,11 @@
 
     function setLawCardOpen(card, open) {
       if (!card) return;
-      card.classList.toggle("is-open", !!open);
-      const btn = card.querySelector(".law-card-sum");
+      card.classList.toggle("open", !!open);
+      const btn = card.querySelector(".law-hd");
+      const act = card.querySelector(".law-hd-action");
       if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (act) act.textContent = open ? "▲ 접기" : "▼ 전문";
     }
 
     /** 같은 답변 말풍선 안의 조문 카드 펼침 + 스크롤 */
@@ -890,8 +875,8 @@
       if (!card && cards.length) card = cards[0];
       if (!card) return;
       setLawCardOpen(card, true);
-      card.classList.add("law-card-flash");
-      setTimeout(() => card.classList.remove("law-card-flash"), 1400);
+      card.classList.add("flash");
+      setTimeout(() => card.classList.remove("flash"), 1200);
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
 
@@ -949,32 +934,36 @@
       return parts.map((line) => `<div class="hang">${esc(line)}</div>`).join("");
     }
 
-    /** articles_used → 펼침 카드 (미리보기 + 전문) */
+    /** articles_used → 접이식 조문 카드 */
     function renderLawCards(articles) {
       if (!articles || !articles.length) return "";
-      const cards = articles.map((a) => {
-        const art = String(a.article_no || "").replace(/\s/g, "");
-        const cite = `[${a.law_name || ""} 제${art}조]`;
-        const title = a.title || "";
-        const body = a.body || "";
-        const prev = lawPreview(body, 100);
-        return `<div class="law-card" id="law-card-${esc(art)}" data-art="${esc(art)}">
-          <button type="button" class="law-card-sum" aria-expanded="false">
-            <div class="law-card-sum-main">
-              <span class="law-cite-label">${esc(cite)}</span>
-              ${title ? `<span class="law-atitle">${esc(title)}</span>` : ""}
-              ${prev ? `<span class="law-preview">${esc(prev)}</span>` : ""}
-            </div>
-            <span class="law-card-toggle" aria-hidden="true"></span>
-          </button>
-          <div class="law-body">${lawBodyHtml(body, title)}</div>
-        </div>`;
-      }).join("");
-      return `<div class="law-section">
-        <div class="law-section-title">관련 법령</div>
-        <p class="law-section-hint">조문 번호 또는 카드를 누르면 전문이 펼쳐집니다 · ${articles.length}건</p>
-        ${cards}
-      </div>`;
+      const cards = articles
+        .map((a) => {
+          const art = String(a.article_no || "").replace(/\s/g, "");
+          const cite = `${a.law_name || ""} 제${art}조`;
+          const title = a.title || "";
+          const body = a.body || "";
+          return (
+            `<div class="law-card" data-art="${esc(art)}">` +
+            `<button type="button" class="law-hd" aria-expanded="false">` +
+            `<span class="law-hd-left">` +
+            `<span class="law-hd-title">[${esc(cite)}]</span>` +
+            (title ? `<span class="law-hd-sub">${esc(title)}</span>` : "") +
+            `</span>` +
+            `<span class="law-hd-action">▼ 전문</span>` +
+            `</button>` +
+            `<div class="law-bd">${lawBodyHtml(body, title)}</div>` +
+            `</div>`
+          );
+        })
+        .join("");
+      return (
+        `<div class="law-section">` +
+        `<div class="law-section-title">관련 법령</div>` +
+        `<p class="law-section-hint">조문 번호 또는 ▼ 전문을 누르면 펼쳐집니다 · ${articles.length}건</p>` +
+        cards +
+        `</div>`
+      );
     }
 
     function downloadText(filename, text) {
@@ -1492,11 +1481,11 @@
 
     // 조문 카드 헤더 토글 / 본문 인용 클릭
     messagesEl.addEventListener("click", (e) => {
-      const sum = e.target.closest(".law-card-sum");
-      if (sum && messagesEl.contains(sum)) {
+      const hd = e.target.closest(".law-hd");
+      if (hd && messagesEl.contains(hd)) {
         e.preventDefault();
-        const card = sum.closest(".law-card");
-        if (card) setLawCardOpen(card, !card.classList.contains("is-open"));
+        const card = hd.closest(".law-card");
+        if (card) setLawCardOpen(card, !card.classList.contains("open"));
         return;
       }
       const btn = e.target.closest(".law-cite");
