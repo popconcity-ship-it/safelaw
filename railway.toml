@@ -1,0 +1,10 @@
+# Railway: Dockerfile 빌드
+# https://railway.app → New Project → Deploy from GitHub → popconcity-ship-it/safelaw
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"

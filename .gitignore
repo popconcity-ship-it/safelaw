@@ -45,7 +45,8 @@ dist/
 # ---------------------------------------------------------------------------
 data/kosha/pdfs/
 data/kosha/text/
-data/kosha/index/
+# index/chunks.jsonl 은 배포·검색용으로 커밋 (원문 PDF는 제외)
+# data/kosha/index/  — 청크는 추적
 data/kosha/download_all.log
 data/kosha/download_all.pid
 data/kosha/watch_done.log

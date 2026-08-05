@@ -1,0 +1,23 @@
+.git
+.venv
+backend/.venv
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# 대용량 — 절대 이미지에 넣지 않음
+data/kosha/pdfs/
+data/kosha/text/
+data/kosha/download_all.log
+data/kosha/download_all.pid
+data/kosha/watch_done.log
+data/kosha/*.bin
+data/cache/
+
+docs/
+scripts/
+**/.pytest_cache
