@@ -113,3 +113,4 @@ class HealthResponse(BaseModel):
     llm: bool
     demo_law: bool
     demo_llm: bool
+    admin_lock: bool = False

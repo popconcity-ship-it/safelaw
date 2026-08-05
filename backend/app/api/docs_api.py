@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from ..agent.orchestrator import Orchestrator
 from ..config import get_settings
@@ -18,6 +20,7 @@ from ..models.schemas import (
     DocumentResponse,
     KoshaSource,
 )
+from ..security import require_admin
 
 router = APIRouter(prefix="/api", tags=["docs-kosha"])
 
@@ -106,7 +109,9 @@ async def kosha_pdf_library(
 
 
 @router.post("/kosha/pdf/ingest")
-async def kosha_pdf_ingest():
+async def kosha_pdf_ingest(
+    _auth: Annotated[None, Depends(require_admin)],
+):
     from ..kosha.pdf_pipeline import ingest_pdf_dir, index_stats
 
     results = ingest_pdf_dir()
@@ -115,12 +120,13 @@ async def kosha_pdf_ingest():
 
 @router.post("/kosha/pdf/upload")
 async def kosha_pdf_upload(
+    _auth: Annotated[None, Depends(require_admin)],
     file: UploadFile = File(...),
     code: str | None = Form(default=None),
     title: str = Form(default=""),
     ingest: bool = Form(default=True),
 ):
-    """브라우저에서 PDF 업로드 → pdfs/ 저장 → (기본) 즉시 인제스트."""
+    """브라우저에서 PDF 업로드 → pdfs/ 저장 → (기본) 즉시 인제스트. 관리 토큰 필요."""
     from ..kosha.pdf_pipeline import PDF_DIR, ingest_pdf, index_stats
 
     if not file.filename:

@@ -44,6 +44,8 @@ app.include_router(docs_router)
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
+    from .security import admin_lock_enabled
+
     s = get_settings()
     return HealthResponse(
         status="ok",
@@ -52,6 +54,7 @@ async def health() -> HealthResponse:
         llm=s.has_llm,
         demo_law=s.use_demo_law,
         demo_llm=s.use_demo_llm,
+        admin_lock=admin_lock_enabled(),
     )
 
 

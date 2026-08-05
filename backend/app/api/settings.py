@@ -1,11 +1,14 @@
-"""API 키 설정 (로컬 .env 저장)."""
+"""API 키 설정 (로컬 .env 저장). 쓰기는 ADMIN_TOKEN 필요."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..config import env_file_path, get_settings, upsert_env_keys
+from ..security import admin_lock_enabled, require_admin
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -21,6 +24,8 @@ class SettingsStatus(BaseModel):
     env_path: str
     demo_law: bool
     demo_llm: bool
+    admin_lock: bool = False
+    """True 이면 관리 API에 X-Admin-Token 필요"""
 
 
 class SettingsUpdate(BaseModel):
@@ -41,6 +46,7 @@ def _hint(value: str) -> str:
 
 @router.get("/settings", response_model=SettingsStatus)
 async def get_settings_status() -> SettingsStatus:
+    """상태 조회는 공개(힌트만). 전체 키는 절대 반환하지 않음."""
     s = get_settings()
     return SettingsStatus(
         gemini_configured=bool(s.gemini_api_key.strip()),
@@ -53,11 +59,15 @@ async def get_settings_status() -> SettingsStatus:
         env_path=str(env_file_path()),
         demo_law=s.use_demo_law,
         demo_llm=s.use_demo_llm,
+        admin_lock=admin_lock_enabled(),
     )
 
 
 @router.post("/settings", response_model=SettingsStatus)
-async def update_settings(body: SettingsUpdate) -> SettingsStatus:
+async def update_settings(
+    body: SettingsUpdate,
+    _auth: Annotated[None, Depends(require_admin)],
+) -> SettingsStatus:
     updates: dict[str, str] = {}
     if body.gemini_api_key is not None:
         updates["GEMINI_API_KEY"] = body.gemini_api_key.strip()

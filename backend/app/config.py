@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     port: int = 8787
     demo_mode: Literal["auto", "true", "false"] = "auto"
 
+    # 관리 API 잠금 (설정 저장 · PDF 업로드/인제스트)
+    # 비어 있으면 잠금 없음(로컬 개발). 배포 시 반드시 긴 임의 문자열 설정.
+    admin_token: str = ""
+
     cache_article_ttl: int = 86400
     cache_search_ttl: int = 3600
 

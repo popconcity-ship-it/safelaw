@@ -545,6 +545,13 @@
     <div class="modal">
       <h2 id="settingsTitle">API 키 설정</h2>
       <p class="sub">키는 이 PC의 <code>.env</code>에 저장됩니다. 전체 키는 다시 보여주지 않습니다.</p>
+      <p class="hint" id="adminLockHint" style="margin-top:-4px;margin-bottom:10px"></p>
+
+      <div class="field">
+        <label for="inpAdminToken">관리자 토큰 (ADMIN_TOKEN)</label>
+        <input id="inpAdminToken" type="password" autocomplete="off" placeholder="서버에 토큰이 있을 때만 필요 · 이 PC에만 기억" />
+        <p class="hint">설정 저장·PDF 업로드에 사용. 채팅에는 필요 없습니다.</p>
+      </div>
 
       <div class="field">
         <label for="inpGemini">Gemini API 키</label>
@@ -612,8 +619,12 @@
       <div id="priorityList" style="font-size:0.82rem;max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:12px"></div>
 
       <details style="margin:8px 0 4px;border:1px solid var(--border);border-radius:12px;padding:8px 12px;background:var(--surface2)">
-        <summary style="cursor:pointer;font-weight:650;font-size:0.9rem">PDF 업로드 · 인제스트</summary>
+        <summary style="cursor:pointer;font-weight:650;font-size:0.9rem">PDF 업로드 · 인제스트 (관리자)</summary>
         <div class="field" style="margin-top:10px">
+          <label for="inpAdminTokenPdf">관리자 토큰</label>
+          <input id="inpAdminTokenPdf" type="password" autocomplete="off" placeholder="ADMIN_TOKEN (설정과 동일, 이 PC에 기억)" />
+        </div>
+        <div class="field">
           <label for="pdfCode">업로드 시 지침번호 (선택 · 비우면 파일명)</label>
           <input id="pdfCode" type="text" placeholder="예: M-185-2015 — 검색창 아님" />
         </div>
@@ -880,6 +891,13 @@
           s.textContent = live ? `${label} 연결` : `${label} 데모`;
           el.appendChild(s);
         }
+        if (h.admin_lock) {
+          const s = document.createElement("span");
+          s.className = "badge demo";
+          s.textContent = "관리잠금";
+          s.title = "설정 저장·PDF 업로드에 ADMIN_TOKEN 필요";
+          el.appendChild(s);
+        }
         return h;
       } catch {
         $("#badges").innerHTML = '<span class="badge off">서버 오프라인</span>';
@@ -913,10 +931,53 @@
       }
     }
 
+    const ADMIN_TOKEN_KEY = "safelaw_admin_token";
+
+    function getAdminToken() {
+      const fromSettings = $("#inpAdminToken")?.value?.trim();
+      const fromPdf = $("#inpAdminTokenPdf")?.value?.trim();
+      const stored = sessionStorage.getItem(ADMIN_TOKEN_KEY) || "";
+      return fromSettings || fromPdf || stored || "";
+    }
+
+    function rememberAdminToken(tok) {
+      const t = (tok || "").trim();
+      if (t) sessionStorage.setItem(ADMIN_TOKEN_KEY, t);
+      if ($("#inpAdminToken") && t) $("#inpAdminToken").value = t;
+      if ($("#inpAdminTokenPdf") && t) $("#inpAdminTokenPdf").value = t;
+    }
+
+    function adminHeaders(extra) {
+      const h = Object.assign({}, extra || {});
+      const tok = getAdminToken();
+      if (tok) h["X-Admin-Token"] = tok;
+      return h;
+    }
+
+    async function parseApiError(r) {
+      try {
+        const j = await r.json();
+        if (j.detail) {
+          return typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+        }
+      } catch (_) {}
+      return "HTTP " + r.status;
+    }
+
     async function loadSettingsStatus() {
       try {
         const r = await fetch("/api/settings");
         const s = await r.json();
+        const lockEl = $("#adminLockHint");
+        if (lockEl) {
+          lockEl.textContent = s.admin_lock
+            ? "🔒 관리 잠금 ON — 저장 시 관리자 토큰이 필요합니다."
+            : "🔓 관리 잠금 OFF — .env 에 ADMIN_TOKEN 이 없어 로컬처럼 열려 있습니다.";
+          lockEl.style.color = s.admin_lock ? "var(--warn)" : "var(--muted)";
+        }
+        const stored = sessionStorage.getItem(ADMIN_TOKEN_KEY) || "";
+        if ($("#inpAdminToken") && stored) $("#inpAdminToken").value = stored;
+        if ($("#inpAdminTokenPdf") && stored) $("#inpAdminTokenPdf").value = stored;
         $("#hintGemini").textContent = s.gemini_configured
           ? `등록됨 (${s.gemini_hint}) · 모델 ${s.gemini_model}`
           : "미등록 — Google AI Studio 키를 입력하세요";
@@ -939,6 +1000,8 @@
       const law = $("#inpLawOc").value.trim();
       const dataGo = $("#inpDataGo").value.trim();
       const model = $("#inpModel").value.trim();
+      const adminTok = $("#inpAdminToken")?.value?.trim() || "";
+      if (adminTok) rememberAdminToken(adminTok);
       const body = {};
       if (gemini) body.gemini_api_key = gemini;
       if (law) body.law_oc = law;
@@ -956,10 +1019,10 @@
       try {
         const r = await fetch("/api/settings", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: adminHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(body),
         });
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        if (!r.ok) throw new Error(await parseApiError(r));
         const s = await r.json();
         settingsMsg.className = "ok";
         settingsMsg.textContent =
@@ -976,7 +1039,7 @@
         await refreshHealth();
       } catch (e) {
         settingsMsg.className = "err";
-        settingsMsg.textContent = "저장 실패: " + e;
+        settingsMsg.textContent = "저장 실패: " + e.message;
       } finally {
         btn.disabled = false;
       }
@@ -1093,6 +1156,8 @@
         koshaPdfMsg.textContent = "PDF 파일을 선택하세요.";
         return;
       }
+      const pdfTok = $("#inpAdminTokenPdf")?.value?.trim();
+      if (pdfTok) rememberAdminToken(pdfTok);
       const fixedCode = $("#pdfCode").value.trim();
       koshaPdfMsg.className = "";
       koshaPdfMsg.textContent = `업로드 중… (0/${files.length})`;
@@ -1104,13 +1169,17 @@
         if (fixedCode && files.length === 1) fd.append("code", fixedCode);
         fd.append("ingest", "true");
         try {
-          const r = await fetch("/api/kosha/pdf/upload", { method: "POST", body: fd });
+          const r = await fetch("/api/kosha/pdf/upload", {
+            method: "POST",
+            headers: adminHeaders(),
+            body: fd,
+          });
+          if (!r.ok) throw new Error(await parseApiError(r));
           const j = await r.json();
-          if (!r.ok) throw new Error(j.detail || r.status);
           ok++;
           koshaPdfMsg.textContent = `업로드 중… (${ok}/${files.length}) · 최근 ${j.code}`;
         } catch (e) {
-          errors.push(files[i].name + ": " + e);
+          errors.push(files[i].name + ": " + (e.message || e));
         }
       }
       koshaPdfMsg.className = errors.length ? "err" : "ok";
@@ -1122,17 +1191,22 @@
     }
 
     async function ingestFolder() {
+      const pdfTok = $("#inpAdminTokenPdf")?.value?.trim();
+      if (pdfTok) rememberAdminToken(pdfTok);
       koshaPdfMsg.textContent = "폴더 인제스트 중…";
       try {
-        const r = await fetch("/api/kosha/pdf/ingest", { method: "POST" });
+        const r = await fetch("/api/kosha/pdf/ingest", {
+          method: "POST",
+          headers: adminHeaders(),
+        });
+        if (!r.ok) throw new Error(await parseApiError(r));
         const j = await r.json();
-        if (!r.ok) throw new Error(r.status);
         koshaPdfMsg.className = "ok";
         koshaPdfMsg.textContent = `폴더 인제스트 완료 · 문서 ${j.stats?.docs || 0} · 청크 ${j.stats?.chunks || 0}`;
         await refreshKoshaPdfPanel();
       } catch (e) {
         koshaPdfMsg.className = "err";
-        koshaPdfMsg.textContent = "실패: " + e;
+        koshaPdfMsg.textContent = "실패: " + (e.message || e);
       }
     }
 
