@@ -450,25 +450,30 @@
       transition: box-shadow 0.2s;
     }
     .law-body {
-      padding: 10px 12px 12px;
+      padding: 8px 12px 8px;
       border-top: 1px solid var(--border);
       margin: 0;
       font-size: 0.86rem;
-      line-height: 1.55;
+      line-height: 1.5;
       color: #1e293b;
       white-space: normal;
-      /* 내용 높이만큼만 — 빈 박스처럼 넓게 두지 않음. 길 때만 스크롤 */
-      max-height: min(50vh, 360px);
+      /* 내용만큼만 높이. 길 때만 스크롤 (빈 여백 최소) */
+      max-height: min(45vh, 280px);
       overflow-y: auto;
+      overflow-x: hidden;
       background: #fff;
+      box-sizing: border-box;
     }
     .law-body:empty {
       display: none;
     }
-    .law-body p { margin: 0 0 0.55em; }
+    .law-body p { margin: 0 0 0.4em; }
     .law-body .hang {
-      margin: 0.35em 0;
-      padding-left: 0;
+      margin: 0 0 0.4em;
+      padding: 0;
+    }
+    .law-body .hang:last-child {
+      margin-bottom: 0;
     }
     .msg.bot .meta {
       margin-top: 10px;
@@ -895,16 +900,19 @@
     function lawBodyHtml(body) {
       let t = String(body || "").replace(/\r/g, "").trim();
       if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
-      t = t.replace(/\n{3,}/g, "\n\n");
+      // 개정 표기·잡공백 정리
+      t = t.replace(/\n{2,}/g, "\n");
+      t = t.replace(/[ \t]+\n/g, "\n");
       // 항 기호 앞에서 줄바꿈 보정
       t = t.replace(/\s*([①②③④⑤⑥⑦⑧⑨⑩])/g, "\n$1");
-      const parts = t.split("\n").map((l) => l.trim()).filter(Boolean);
+      const parts = t
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
       if (!parts.length) {
         return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       }
-      return parts
-        .map((line) => `<div class="hang">${esc(line)}</div>`)
-        .join("");
+      return parts.map((line) => `<div class="hang">${esc(line)}</div>`).join("");
     }
 
     /** articles_used → 펼침 카드 (미리보기 + 전문) */
