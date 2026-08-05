@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets — 절대 커밋 금지
+.env
+.env.local
+.env.*.local
+*.pem
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Runtime / logs
+data/cache/
+*.log
+.coverage
+htmlcov/
+nohup.out
+
+# Node (if frontend grows later)
+node_modules/
+dist/
+.next/
+
+# ---------------------------------------------------------------------------
+# KOSHA 대용량 바이너리 · 재생성 가능 산출물 (GitHub에 올리지 않음)
+# 원본 PDF ~490MB · 추출 텍스트 · 검색 청크
+# 로컬: scripts/download_kosha_pdfs.py · ingest_kosha_pdfs.py
+# 배포: R2/S3 등 객체 스토리지 권장
+# ---------------------------------------------------------------------------
+data/kosha/pdfs/
+data/kosha/text/
+data/kosha/index/
+data/kosha/download_all.log
+data/kosha/download_all.pid
+data/kosha/watch_done.log
+data/kosha/*.bin
+
+# 임시 다운로드 리포트 (선택 추적 시 주석 해제하지 말 것)
+# data/kosha/download_report.json
