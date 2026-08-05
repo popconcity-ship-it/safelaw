@@ -314,16 +314,17 @@
     /* 사용자 말풍선: 한글 한 글자씩 세로로 깨지지 않게 */
     .msg.user {
       align-self: flex-end;
-      width: fit-content;
+      width: max-content;
       max-width: min(85%, 520px);
-      min-width: 3.5rem;
+      min-width: unset;
       background: var(--accent-dim);
       border: 1px solid #93c5fd;
       color: #1e3a5f;
-      /* keep-all: 한글 단어 중간 강제 개행 방지 */
+      white-space: normal;
       word-break: keep-all;
       overflow-wrap: break-word;
       line-height: 1.45;
+      text-align: left;
     }
     .msg.bot {
       align-self: flex-start;
@@ -1270,9 +1271,22 @@
       if (e.key === "Escape" && !settingsModal.classList.contains("hidden")) closeSettings();
     });
 
+    let sending = false;
+
     async function send(text) {
+      if (sending) return;
       const q = (text || input.value).trim();
       if (!q) return;
+      // 한 글자(예: 「사」)는 검색 의미 없음 — 오전송·IME 잔여 방지
+      if ([...q].length < 2) {
+        addMsg(
+          "bot",
+          lightMd(
+            "질문을 **두 글자 이상** 입력해 주세요. 예: `지도사`, `밀폐공간`, `위험성평가`"
+          )
+        );
+        return;
+      }
       input.value = "";
       autoGrow();
       $("#hero")?.remove();
@@ -1281,6 +1295,7 @@
 
       addMsg("user", esc(q));
       history.push({ role: "user", content: q });
+      sending = true;
       sendBtn.disabled = true;
       const pending = addMsg("bot", '<span class="typing">조문·가이드 조회 중…</span>');
 
@@ -1292,9 +1307,11 @@
         });
         if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
+        const arts = data.articles_used || [];
+        // 조문이 있으면 카드 항상 표시 (요약 문구만 있고 본문 없는 느낌 방지)
         pending.innerHTML =
           lightMd(data.answer) +
-          renderLawCards(data.articles_used) +
+          renderLawCards(arts) +
           renderMeta(data);
         pending.querySelectorAll("[data-copy]").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1319,6 +1336,7 @@
         pending.innerHTML = "요청에 실패했습니다. 서버가 실행 중인지 확인해 주세요.<br/><span class='meta'>" + esc(String(e)) + "</span>";
         requestAnimationFrame(() => scrollToMsgStart(pending));
       } finally {
+        sending = false;
         sendBtn.disabled = false;
         input.focus({ preventScroll: true });
       }

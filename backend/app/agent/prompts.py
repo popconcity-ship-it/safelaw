@@ -145,9 +145,17 @@ def demo_answer(question: str, articles: list, kosha_hits: list | None = None) -
     has_kosha = bool(display_kosha)
 
     if not has_law and not has_kosha:
+        q = (question or "").strip()
+        if len(q) < 2:
+            return (
+                "질문이 너무 짧습니다. **두 글자 이상**으로 물어 주세요.\n"
+                "예: `지도사`, `밀폐공간`, `위험성평가`\n\n"
+                "※ 참고용 · 최종 판단은 전문가·관할 기관 확인"
+            )
         return (
-            "관련 조문·KOSHA 가이드를 찾지 못했습니다. "
-            "키워드를 바꿔 다시 질문해 주세요.\n\n"
+            f"「{q}」에 바로 맞는 조문·KOSHA 가이드를 찾지 못했습니다.\n"
+            "조금 더 구체적으로 물어 보시면 좋습니다. "
+            "예: `산업안전지도사 자격`, `밀폐공간 작업`\n\n"
             "※ 참고용 · 최종 판단은 전문가·관할 기관 확인"
         )
 
