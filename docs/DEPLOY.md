@@ -5,10 +5,11 @@
 | 포함 | 미포함 |
 |:---|:---|
 | 앱 코드 + UI | `.env` (시크릿은 호스팅에 직접) |
-| 법령 코퍼스 | `data/kosha/pdfs/` (~490MB) |
-| KOSHA 목록 + 검색 청크 | 원문 PDF (포털 링크로 대체) |
+| 법령 코퍼스 | 이미지 안: `data/kosha/pdfs/` (~490MB) |
+| KOSHA 목록 + 검색 청크 | 원문 PDF는 **R2** `qbank-raw/safelaw/kosha/pdfs/` |
 
-원문 PDF는 나중에 R2 등에 두고 URL만 붙이면 됩니다.
+원문 PDF: `./scripts/upload_kosha_r2.sh --go` 로 업로드.  
+앱은 `/api/kosha/pdf/file/{code}` → R2 **presigned** 리다이렉트.
 
 ## 관리(키 저장·PDF 업로드)
 
