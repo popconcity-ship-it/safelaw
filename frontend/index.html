@@ -422,6 +422,32 @@
       overflow: hidden;
     }
     .law-card[open] .law-preview { display: none; }
+    .law-cite {
+      display: inline;
+      margin: 0;
+      padding: 0 2px;
+      border: none;
+      border-bottom: 1.5px solid #3b82f6;
+      background: transparent;
+      color: #1d4ed8;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .law-cite:hover {
+      background: #dbeafe;
+      border-bottom-color: #1d4ed8;
+    }
+    .law-cite-label {
+      font-weight: 700;
+      color: #1e3a5f;
+      font-size: 0.9rem;
+    }
+    .law-card.law-card-flash {
+      box-shadow: 0 0 0 2px #3b82f6;
+      transition: box-shadow 0.2s;
+    }
     .law-body {
       padding: 0 12px 12px;
       border-top: 1px solid var(--border);
@@ -786,7 +812,63 @@
         html += "</table>";
         return html;
       });
+      // 조문 인용 → 클릭 시 아래 카드로 이동 (예: [산안법 제36조])
+      t = linkifyLawCites(t);
       return t;
+    }
+
+    /** 산안법/중처법 제N조 표기를 클릭 가능한 버튼으로 */
+    function linkifyLawCites(html) {
+      const re =
+        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:의\s*(\d+))?)\]?/g;
+      return html.replace(re, (m, full, main, sub1, sub2) => {
+        const sub = sub1 || sub2 || "";
+        const art = sub ? `${main}의${sub}` : String(main);
+        const label = full.replace(/^\[/, "").replace(/\]$/, "");
+        return (
+          `<button type="button" class="law-cite" data-art="${esc(art)}" title="조문 전문 보기">` +
+          `${esc(label)}</button>`
+        );
+      });
+    }
+
+    /** 같은 답변 말풍선 안의 조문 카드 펼침 + 스크롤 */
+    function openLawCite(art, scopeEl) {
+      const root = scopeEl || messagesEl;
+      if (!root || !art) return;
+      const want = String(art).replace(/\s/g, "");
+      const cards = root.querySelectorAll(".law-card[data-art]");
+      let card = null;
+      for (const c of cards) {
+        const a = (c.getAttribute("data-art") || "").replace(/\s/g, "");
+        if (a === want || a.startsWith(want + "의") || want.startsWith(a)) {
+          card = c;
+          break;
+        }
+      }
+      if (!card && cards.length) card = cards[0];
+      if (!card) return;
+      card.open = true;
+      card.classList.add("law-card-flash");
+      setTimeout(() => card.classList.remove("law-card-flash"), 1400);
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    /** 결론 → 법령 카드 → KOSHA 순으로 조립 */
+    function renderBotAnswer(answer, articles) {
+      const raw = answer || "";
+      const m = raw.match(/^([\s\S]*?)(?=^### KOSHA GUIDE\s*$)/m);
+      let head = raw;
+      let kosha = "";
+      if (m) {
+        head = m[1];
+        kosha = raw.slice(m[1].length);
+      }
+      return (
+        lightMd(head) +
+        renderLawCards(articles) +
+        (kosha ? lightMd(kosha) : "")
+      );
     }
 
     /** 조문 본문 미리보기 (요약 2줄) */
@@ -825,13 +907,14 @@
     function renderLawCards(articles) {
       if (!articles || !articles.length) return "";
       const cards = articles.map((a, i) => {
-        const cite = `[${a.law_name || ""} 제${a.article_no || ""}조]`;
+        const art = String(a.article_no || "").replace(/\s/g, "");
+        const cite = `[${a.law_name || ""} 제${art}조]`;
         const title = a.title || "";
         const prev = lawPreview(a.body || "", 150);
         const open = i === 0 ? " open" : "";
-        return `<details class="law-card"${open}>
+        return `<details class="law-card" id="law-card-${esc(art)}" data-art="${esc(art)}"${open}>
           <summary>
-            <span class="law-cite">${esc(cite)}</span>
+            <span class="law-cite-label">${esc(cite)}</span>
             ${title ? `<span class="law-atitle">${esc(title)}</span>` : ""}
             ${prev ? `<span class="law-preview">${esc(prev)}</span>` : ""}
           </summary>
@@ -840,7 +923,7 @@
       }).join("");
       return `<div class="law-section">
         <div class="law-section-title">관련 법령</div>
-        <p class="law-section-hint">요약을 보고, 누르면 조문 전문이 펼쳐집니다 · ${articles.length}건</p>
+        <p class="law-section-hint">본문의 조문 번호를 누르거나, 카드를 펼쳐 전문을 보세요 · ${articles.length}건</p>
         ${cards}
       </div>`;
     }
@@ -1308,11 +1391,8 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         const data = await r.json();
         const arts = data.articles_used || [];
-        // 조문이 있으면 카드 항상 표시 (요약 문구만 있고 본문 없는 느낌 방지)
-        pending.innerHTML =
-          lightMd(data.answer) +
-          renderLawCards(arts) +
-          renderMeta(data);
+        // 결론 → 법령 카드 → KOSHA 순
+        pending.innerHTML = renderBotAnswer(data.answer, arts) + renderMeta(data);
         pending.querySelectorAll("[data-copy]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const doc = window.__docs?.[btn.getAttribute("data-copy")];
@@ -1346,6 +1426,14 @@
       input.style.height = "auto";
       input.style.height = Math.min(input.scrollHeight, 140) + "px";
     }
+
+    // 조문 인용 클릭 → 같은 답변 안의 카드 펼침
+    messagesEl.addEventListener("click", (e) => {
+      const btn = e.target.closest(".law-cite");
+      if (!btn || !messagesEl.contains(btn)) return;
+      e.preventDefault();
+      openLawCite(btn.getAttribute("data-art"), btn.closest(".msg.bot") || messagesEl);
+    });
 
     sendBtn.addEventListener("click", () => send());
     input.addEventListener("input", autoGrow);
