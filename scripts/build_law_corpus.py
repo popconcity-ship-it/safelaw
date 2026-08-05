@@ -45,6 +45,15 @@ def _text_of(el: ET.Element | None) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def _normalize_body(body: str) -> str:
+    """번호만 있는 줄 + 동일 번호 본문 줄 중복 제거 (법제처 XML 트리 잔여)."""
+    if not body:
+        return ""
+    from app.law.corpus import normalize_law_body
+
+    return normalize_law_body(body)
+
+
 def parse_law_xml(xml_text: str, law_name: str, mst: str) -> list[dict]:
     if not xml_text.strip() or "<html" in xml_text[:200].lower():
         return []
@@ -85,6 +94,7 @@ def parse_law_xml(xml_text: str, law_name: str, mst: str) -> list[dict]:
                 extra = _text_of(c)
                 if extra and extra not in body:
                     body = (body + "\n" + extra).strip()
+        body = _normalize_body(body)
         art = f"{no}의{branch}" if branch and branch not in ("0", "00") else no
         if len(body) < 8 and not title:
             continue

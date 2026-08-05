@@ -19,6 +19,44 @@ _DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "law"
 CORPUS_PATH = _DATA_DIR / "corpus.jsonl"
 
 
+def normalize_law_body(body: str) -> str:
+    """법제처 XML 파싱 잔여: 번호만 있는 줄 + 같은 번호 본문 줄 중복 제거.
+
+    예::
+        ①\\n① 산업안전지도사는…  →  ① 산업안전지도사는…
+        1.\\n1. 공정상의…        →  1. 공정상의…
+    """
+    if not body:
+        return ""
+    t = str(body).replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
+    hang_only = set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        nxt = lines[i + 1] if i + 1 < len(lines) else None
+        # 고아 항 기호 (다음 줄이 같은 기호로 시작)
+        if ln in hang_only and nxt and nxt.startswith(ln):
+            i += 1
+            continue
+        # 고아 호 번호 "1." / "12."
+        m = re.fullmatch(r"(\d+)\.", ln)
+        if m and nxt and (
+            nxt.startswith(m.group(0)) or nxt.startswith(m.group(1) + ".")
+        ):
+            i += 1
+            continue
+        # 고아 목 "가." "나."
+        m2 = re.fullmatch(r"([가-힣])\.", ln)
+        if m2 and nxt and nxt.startswith(m2.group(0)):
+            i += 1
+            continue
+        out.append(ln)
+        i += 1
+    return "\n".join(out)
+
+
 def _tokens(text: str) -> list[str]:
     text = (text or "").lower()
     # 2글자 이상 한글/영문/숫자 (지도사, 위험성평가 등)
@@ -72,9 +110,12 @@ def load_corpus() -> tuple[dict, ...]:
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(row, dict) and row.get("body"):
+                row["body"] = normalize_law_body(row["body"])
+            rows.append(row)
     logger.info("law corpus loaded: %d articles from %s", len(rows), CORPUS_PATH)
     return tuple(rows)
 

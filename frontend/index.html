@@ -1018,11 +1018,14 @@
 
     /** 조문 핵심 요약 — ①항(또는 첫  substantive 문장), 질문 키워드 있으면 그 항 우선 */
     function lawSummary(body, maxLen, question) {
-      let t = String(body || "").replace(/\r/g, "").trim();
+      let t = normalizeLawBody(body);
       t = t.replace(/^제\d+장[^\n]*\n?/gm, "");
       t = t.replace(/^제\s*\d+(?:의\d+)?조[^\n(]*(\([^)]*\))?/, "").trim();
-      // 항 단위 분리
-      const hangs = t.split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/).map((s) => s.trim()).filter(Boolean);
+      // 항 단위 분리 (번호만 있는 조각 제외)
+      const hangs = t
+        .split(/(?=[①②③④⑤⑥⑦⑧⑨⑩])/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 1);
       let pick = "";
       const q = (question || "").replace(/\s+/g, "");
       if (q && hangs.length) {
@@ -1058,9 +1061,36 @@
       return lawSummary(body, maxLen, "");
     }
 
-    /** 본문 HTML — 항(①②) 단위 */
-    function lawBodyHtml(body, titleHint) {
+    /**
+     * 법제처 파싱 잔여: 번호만 있는 줄 + 같은 번호 본문 중복 제거
+     *  ①\\n① 본문… → ① 본문…   /   1.\\n1. 항목 → 1. 항목
+     */
+    function normalizeLawBody(body) {
       let t = String(body || "").replace(/\r/g, "").trim();
+      if (!t) return "";
+      const hangOnly = new Set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮".split(""));
+      const raw = t
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const out = [];
+      for (let i = 0; i < raw.length; i++) {
+        const ln = raw[i];
+        const nxt = raw[i + 1];
+        if (hangOnly.has(ln) && nxt && nxt.startsWith(ln)) continue;
+        const mNum = ln.match(/^(\d+)\.$/);
+        if (mNum && nxt && (nxt.startsWith(mNum[0]) || nxt.startsWith(mNum[1] + ".")))
+          continue;
+        const mMok = ln.match(/^([가-힣])\.$/);
+        if (mMok && nxt && nxt.startsWith(mMok[0])) continue;
+        out.push(ln);
+      }
+      return out.join("\n");
+    }
+
+    /** 본문 HTML — 항(①②)·호 단위 (고아 번호 줄 제거 후) */
+    function lawBodyHtml(body, titleHint) {
+      let t = normalizeLawBody(body);
       if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       // 제목 줄이 본문에 반복되면 제거 (카드 헤더에 이미 있음)
       t = t.replace(/^제\s*\d+(?:의\d+)?조[^\n]*\n?/, "");
@@ -1069,7 +1099,9 @@
         t = t.replace(new RegExp("^" + th + "\\s*\\n?"), "");
       }
       t = t.replace(/\n{2,}/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
-      t = t.replace(/\s*([①②③④⑤⑥⑦⑧⑨⑩])/g, "\n$1");
+      // 항 기호 앞에서만 줄바꿈 (이미 줄 시작이면 유지)
+      t = t.replace(/([^\n])([①②③④⑤⑥⑦⑧⑨⑩])/g, "$1\n$2");
+      t = normalizeLawBody(t);
       const parts = t
         .split("\n")
         .map((l) => l.trim())
