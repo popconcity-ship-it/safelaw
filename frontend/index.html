@@ -617,10 +617,14 @@
       padding: 2px 0;
       vertical-align: middle;
     }
-    .msg.bot:has(> .typing:only-child) {
+    .msg.bot.is-typing {
       min-height: 2.75rem;
       display: flex;
       align-items: center;
+      flex: 0 0 auto !important;
+      overflow: visible;
+      padding-top: 12px;
+      padding-bottom: 12px;
     }
 
     /* simple markdown-ish */
@@ -1553,13 +1557,37 @@
     });
 
     let sending = false;
+    /** 한글 IME: 전송 직후 마지막 글자가 입력창에 다시 붙는 잔여 억제 */
+    let imeComposing = false;
+    let suppressImeResidue = false;
+    let residueClearTimer = 0;
+
+    function clearComposer() {
+      suppressImeResidue = true;
+      if (residueClearTimer) clearTimeout(residueClearTimer);
+      input.value = "";
+      autoGrow();
+      // compositionend / 다음 틱에 IME가 확정 글자를 다시 넣는 경우 대비
+      requestAnimationFrame(() => {
+        input.value = "";
+        autoGrow();
+      });
+      residueClearTimer = setTimeout(() => {
+        input.value = "";
+        autoGrow();
+        suppressImeResidue = false;
+        residueClearTimer = 0;
+      }, 80);
+    }
 
     async function send(text) {
       if (sending) return;
-      const q = (text || input.value).trim();
+      // 칩/인자 전송이 아니면 현재 입력값 스냅샷 (IME 확정 전 value 포함)
+      const q = (text != null && text !== "" ? String(text) : input.value).trim();
       if (!q) return;
-      // 한 글자(예: 「사」)는 검색 의미 없음 — 오전송·IME 잔여 방지
+      // 한 글자(예: 「사」·IME 잔여 「력」)는 검색 의미 없음
       if ([...q].length < 2) {
+        clearComposer();
         addMsg(
           "bot",
           lightMd(
@@ -1568,8 +1596,7 @@
         );
         return;
       }
-      input.value = "";
-      autoGrow();
+      clearComposer();
       $("#hero")?.remove();
       $("#chips")?.remove();
       $("#tools")?.remove();
@@ -1579,6 +1606,7 @@
       sending = true;
       sendBtn.disabled = true;
       const pending = addMsg("bot", '<span class="typing">조문·가이드 조회 중…</span>');
+      pending.classList.add("is-typing");
       // 1.2초 넘기면 LLM 단계 문구 (조회 자체는 보통 0.1~0.5초)
       const stageTimer = setTimeout(() => {
         if (pending.querySelector(".typing")) {
@@ -1598,6 +1626,7 @@
         const arts = data.articles_used || [];
         const koshaSrc = data.kosha_sources || [];
         // 결론 → 법령(요약+전문) → KOSHA 카드
+        pending.classList.remove("is-typing");
         pending.innerHTML =
           renderBotAnswer(data.answer, arts, koshaSrc, q) + renderMeta(data);
         pending.querySelectorAll("[data-copy]").forEach((btn) => {
@@ -1620,13 +1649,23 @@
         // 긴 답변: 하단이 아니라 답 시작 부분이 보이도록
         requestAnimationFrame(() => scrollToMsgStart(pending));
       } catch (e) {
+        pending.classList.remove("is-typing");
         pending.innerHTML = "요청에 실패했습니다. 서버가 실행 중인지 확인해 주세요.<br/><span class='meta'>" + esc(String(e)) + "</span>";
         requestAnimationFrame(() => scrollToMsgStart(pending));
       } finally {
         clearTimeout(stageTimer);
         sending = false;
         sendBtn.disabled = false;
+        // 포커스 전에 한 번 더 비움 — 포커스 시 IME 잔여 삽입 방지
+        input.value = "";
+        autoGrow();
         input.focus({ preventScroll: true });
+        requestAnimationFrame(() => {
+          if (input.value.length && input.value.length <= 2) {
+            input.value = "";
+            autoGrow();
+          }
+        });
       }
     }
 
@@ -1651,12 +1690,29 @@
     });
 
     sendBtn.addEventListener("click", () => send());
-    input.addEventListener("input", autoGrow);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        send();
+    input.addEventListener("input", () => {
+      // 전송 직후 IME가 마지막 글자만 다시 넣으면 즉시 제거
+      if (suppressImeResidue && input.value.length > 0 && input.value.length <= 2) {
+        input.value = "";
       }
+      autoGrow();
+    });
+    input.addEventListener("compositionstart", () => {
+      imeComposing = true;
+    });
+    input.addEventListener("compositionend", () => {
+      imeComposing = false;
+      if (suppressImeResidue) {
+        input.value = "";
+        autoGrow();
+      }
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.shiftKey) return;
+      // 한글 조합 중 Enter = 확정만. 전송은 다음 Enter / 보내기
+      if (e.isComposing || e.keyCode === 229 || imeComposing) return;
+      e.preventDefault();
+      send();
     });
     document.querySelectorAll(".chip, #tools button[data-q]").forEach((c) => {
       c.addEventListener("click", () => send(c.dataset.q));
