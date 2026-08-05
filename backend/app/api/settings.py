@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..config import env_file_path, get_settings, upsert_env_keys
-from ..security import admin_lock_enabled, require_admin
+from ..security import admin_lock_enabled, admin_policy, require_admin
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -24,8 +24,10 @@ class SettingsStatus(BaseModel):
     env_path: str
     demo_law: bool
     demo_llm: bool
-    admin_lock: bool = False
-    """True 이면 관리 API에 X-Admin-Token 필요"""
+    admin_lock: bool = True
+    """관리 기능이 제한되는 구조인지 (항상 True — 로컬만/토큰)"""
+    admin_policy: str = "local_only"
+    """local_only | token_or_local"""
 
 
 class SettingsUpdate(BaseModel):
@@ -60,6 +62,7 @@ async def get_settings_status() -> SettingsStatus:
         demo_law=s.use_demo_law,
         demo_llm=s.use_demo_llm,
         admin_lock=admin_lock_enabled(),
+        admin_policy=admin_policy(),
     )
 
 

@@ -36,16 +36,16 @@ cp .env.example .env
 | `LAW_OC` | [법제처 Open API](https://open.law.go.kr/LSO/openApi/guideList.do) 인증키 |
 | `OPENAI_API_KEY` | (선택) Gemini 없을 때 폴백 |
 | `DEMO_MODE` | `auto`(기본) / `true` / `false` |
-| `ADMIN_TOKEN` | 관리 API 잠금 (설정 저장·PDF 업로드/인제스트). **비우면 잠금 없음(로컬)**. 배포 시 필수 |
+| `ADMIN_TOKEN` | (선택) 원격 관리용. **보통 비움** |
 
 키 파일 위치: **`~/Documents/safelaw/.env`**
 
-### 관리자 잠금
+### 관리 기능 (쉬운 규칙)
 
-- `ADMIN_TOKEN` 을 `.env`에 넣으면: 설정 저장·PDF 업로드·인제스트에 헤더 `X-Admin-Token` 필요
-- UI「API 키」·「PDF 수집」에 토큰 입력칸이 있고, 이 브라우저 탭(`sessionStorage`)에만 기억
-- 채팅·법령 검색·PDF 보기는 토큰 없이 가능
-- 토큰 미설정 시 로컬 개발처럼 관리 API가 열려 있음
+- **API 키 저장 · PDF 업로드** → 서버가 켜진 **이 컴퓨터(로컬)** 에서만
+- **채팅 · 법령 · PDF 보기** → 그대로 가능
+- 배포 후 인터넷 사용자는 관리 불가 (키는 서버 `.env`를 직접 수정)
+- 토큰 입력 없음. 평소에 신경 쓸 것 없음
 
 ## 구조
 
