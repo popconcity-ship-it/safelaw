@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-5-sonnet-latest"
+    # false 면 Gemini/OpenAI 호출 안 함 (한도 소진 시 검색 요약만)
+    enable_llm: bool = False
 
     host: str = "0.0.0.0"
     port: int = 8787
@@ -98,6 +100,8 @@ class Settings(BaseSettings):
 
     @property
     def use_demo_llm(self) -> bool:
+        if not self.enable_llm:
+            return True
         if self.demo_mode == "true":
             return True
         if self.demo_mode == "false":
