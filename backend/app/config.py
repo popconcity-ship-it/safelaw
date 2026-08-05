@@ -36,15 +36,17 @@ class Settings(BaseSettings):
     # 공공데이터포털 (KOSHA GUIDE Open API)
     data_go_kr_key: str = ""
 
-    # LLM — Gemini 우선, 없으면 OpenAI
+    # LLM — Groq(무료 티어) 우선 → Gemini → OpenAI
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-3-5-sonnet-latest"
-    # false 면 Gemini/OpenAI 호출 안 함 (한도 소진 시 검색 요약만)
-    enable_llm: bool = False
+    # false 면 LLM 호출 안 함 (검색 요약만). true 면 등록된 키 사용
+    enable_llm: bool = True
 
     host: str = "0.0.0.0"
     port: int = 8787
@@ -85,10 +87,15 @@ class Settings(BaseSettings):
     @property
     def has_llm(self) -> bool:
         return bool(
-            self.gemini_api_key.strip()
+            self.groq_api_key.strip()
+            or self.gemini_api_key.strip()
             or self.openai_api_key.strip()
             or self.anthropic_api_key.strip()
         )
+
+    @property
+    def has_groq(self) -> bool:
+        return bool(self.groq_api_key.strip())
 
     @property
     def use_demo_law(self) -> bool:

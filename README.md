@@ -36,10 +36,13 @@ cp .env.example .env
 
 | 변수 | 설명 |
 |------|------|
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) 키 — 답변 생성 |
+| `GROQ_API_KEY` | [Groq Console](https://console.groq.com/keys) — **무료 티어 LLM (우선)** |
+| `GROQ_MODEL` | 기본 `llama-3.3-70b-versatile` |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) — Groq 없을 때 |
 | `GEMINI_MODEL` | 기본 `gemini-2.0-flash` |
+| `ENABLE_LLM` | `true` 면 LLM 사용, `false` 면 검색 요약만 |
 | `LAW_OC` | [법제처 Open API](https://open.law.go.kr/LSO/openApi/guideList.do) 인증키 |
-| `OPENAI_API_KEY` | (선택) Gemini 없을 때 폴백 |
+| `OPENAI_API_KEY` | (선택) 추가 폴백 |
 | `DEMO_MODE` | `auto`(기본) / `true` / `false` |
 | `ADMIN_TOKEN` | (선택) 원격 관리용. **보통 비움** |
 

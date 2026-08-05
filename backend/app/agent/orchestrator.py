@@ -187,6 +187,32 @@ class Orchestrator:
             workplace,
         )
         try:
+            if self.settings.groq_api_key.strip():
+                from openai import AsyncOpenAI
+
+                client = AsyncOpenAI(
+                    api_key=self.settings.groq_api_key.strip(),
+                    base_url="https://api.groq.com/openai/v1",
+                )
+                for model in self._groq_model_candidates():
+                    try:
+                        resp = await client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "산업안전 실무 문서 보조. 마크다운만.",
+                                },
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=0.3,
+                            max_tokens=900,
+                        )
+                        text = (resp.choices[0].message.content or "").strip()
+                        if text:
+                            return text
+                    except Exception as e:
+                        logger.warning("Groq doc supplement %s: %s", model, e)
             if self.settings.gemini_api_key.strip():
                 return await self._gemini_raw(prompt, max_tokens=900)
             if self.settings.openai_api_key.strip():
@@ -205,6 +231,16 @@ class Orchestrator:
         kosha_block: str | None = None,
     ) -> str:
         kosha_hits = kosha_hits or []
+        # Groq(무료 티어) 우선 — Gemini 한도 대체용
+        if self.settings.groq_api_key.strip():
+            return await self._groq(
+                message,
+                articles,
+                history,
+                workplace,
+                kosha_hits=kosha_hits,
+                kosha_block=kosha_block,
+            )
         if self.settings.gemini_api_key.strip():
             return await self._gemini(
                 message,
@@ -427,6 +463,74 @@ class Orchestrator:
         return hits >= 2 or (
             hits >= 1 and "제" not in t and "조" not in t[:200]
         )
+
+    def _groq_model_candidates(self) -> list[str]:
+        primary = (self.settings.groq_model or "llama-3.3-70b-versatile").strip()
+        fallbacks = [
+            primary,
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "gemma2-9b-it",
+        ]
+        seen: set[str] = set()
+        out: list[str] = []
+        for m in fallbacks:
+            if m and m not in seen:
+                seen.add(m)
+                out.append(m)
+        return out
+
+    async def _groq(
+        self,
+        message: str,
+        articles: list[Article],
+        history: list[dict[str, str]],
+        workplace: dict[str, Any] | None,
+        kosha_hits: list | None = None,
+        kosha_block: str | None = None,
+    ) -> str:
+        """Groq OpenAI-compatible API."""
+        from openai import AsyncOpenAI
+
+        kosha_hits = kosha_hits or []
+        client = AsyncOpenAI(
+            api_key=self.settings.groq_api_key.strip(),
+            base_url="https://api.groq.com/openai/v1",
+        )
+        messages = self._build_messages(
+            message, articles, history or [], workplace, kosha_block=kosha_block
+        )
+        last_err = ""
+        try:
+            for model in self._groq_model_candidates():
+                try:
+                    resp = await client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=0.2,
+                        max_tokens=1200,
+                    )
+                    text = (resp.choices[0].message.content or "").strip()
+                    if not text:
+                        last_err = f"empty on {model}"
+                        continue
+                    if articles and self._llm_refused(text):
+                        last_err = f"refusal on {model}"
+                        continue
+                    return text
+                except Exception as e:
+                    last_err = f"{model}: {e}"
+                    logger.warning("Groq error on %s: %s", model, e)
+                    continue
+        except Exception as e:
+            logger.exception("Groq error: %s", e)
+            last_err = str(e)
+
+        note = (
+            f"\n\n---\n_AI 요약 일시 불가(Groq) · "
+            "아래는 검색된 조문·가이드 기반 안내입니다._"
+        )
+        return demo_answer(message, articles, kosha_hits) + note
 
     async def _openai(
         self,

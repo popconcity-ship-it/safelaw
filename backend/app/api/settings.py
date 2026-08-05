@@ -15,12 +15,16 @@ router = APIRouter(prefix="/api", tags=["settings"])
 
 class SettingsStatus(BaseModel):
     gemini_configured: bool
+    groq_configured: bool = False
     law_oc_configured: bool
     data_go_kr_configured: bool
     gemini_model: str
+    groq_model: str = "llama-3.3-70b-versatile"
     gemini_hint: str = ""
+    groq_hint: str = ""
     law_oc_hint: str = ""
     data_go_kr_hint: str = ""
+    enable_llm: bool = True
     env_path: str
     demo_law: bool
     demo_llm: bool
@@ -32,9 +36,12 @@ class SettingsStatus(BaseModel):
 
 class SettingsUpdate(BaseModel):
     gemini_api_key: str | None = Field(default=None, max_length=500)
+    groq_api_key: str | None = Field(default=None, max_length=500)
     law_oc: str | None = Field(default=None, max_length=200)
     data_go_kr_key: str | None = Field(default=None, max_length=500)
     gemini_model: str | None = Field(default=None, max_length=80)
+    groq_model: str | None = Field(default=None, max_length=80)
+    enable_llm: bool | None = None
 
 
 def _hint(value: str) -> str:
@@ -52,12 +59,16 @@ async def get_settings_status() -> SettingsStatus:
     s = get_settings()
     return SettingsStatus(
         gemini_configured=bool(s.gemini_api_key.strip()),
+        groq_configured=bool(s.groq_api_key.strip()),
         law_oc_configured=bool(s.law_oc.strip()),
         data_go_kr_configured=bool(s.data_go_kr_key.strip()),
         gemini_model=s.gemini_model,
+        groq_model=s.groq_model,
         gemini_hint=_hint(s.gemini_api_key),
+        groq_hint=_hint(s.groq_api_key),
         law_oc_hint=_hint(s.law_oc),
         data_go_kr_hint=_hint(s.data_go_kr_key),
+        enable_llm=s.enable_llm,
         env_path=str(env_file_path()),
         demo_law=s.use_demo_law,
         demo_llm=s.use_demo_llm,
@@ -74,12 +85,18 @@ async def update_settings(
     updates: dict[str, str] = {}
     if body.gemini_api_key is not None:
         updates["GEMINI_API_KEY"] = body.gemini_api_key.strip()
+    if body.groq_api_key is not None:
+        updates["GROQ_API_KEY"] = body.groq_api_key.strip()
     if body.law_oc is not None:
         updates["LAW_OC"] = body.law_oc.strip()
     if body.data_go_kr_key is not None:
         updates["DATA_GO_KR_KEY"] = body.data_go_kr_key.strip()
     if body.gemini_model is not None and body.gemini_model.strip():
         updates["GEMINI_MODEL"] = body.gemini_model.strip()
+    if body.groq_model is not None and body.groq_model.strip():
+        updates["GROQ_MODEL"] = body.groq_model.strip()
+    if body.enable_llm is not None:
+        updates["ENABLE_LLM"] = "true" if body.enable_llm else "false"
 
     if updates:
         upsert_env_keys(updates)
