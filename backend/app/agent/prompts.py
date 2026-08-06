@@ -44,14 +44,23 @@ def build_user_prompt(
     return "\n\n".join(parts)
 
 
+def _article_label(a) -> str:
+    """조문/별표 표시 라벨."""
+    art = str(getattr(a, "article_no", "") or "")
+    law = getattr(a, "law_name", "") or ""
+    if art.startswith("별표"):
+        return f"{law} {art.replace('별표', '별표 ', 1)}"
+    if art.startswith("별지"):
+        return f"{law} 별지 제{art.replace('별지', '', 1)}호서식"
+    return f"{law} 제{art}조"
+
+
 def format_articles_block(articles: list) -> str:
     if not articles:
         return "(검색된 조문 없음 — 법적 주장을 하지 말고 확인 불가 안내)"
     blocks = []
     for a in articles:
-        blocks.append(
-            f"### [{a.law_name} 제{a.article_no}조] {a.title}\n{a.body}"
-        )
+        blocks.append(f"### [{_article_label(a)}] {a.title}\n{a.body}")
     return "\n\n".join(blocks)
 
 
