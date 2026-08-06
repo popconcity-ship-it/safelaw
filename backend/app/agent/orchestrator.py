@@ -396,7 +396,7 @@ class Orchestrator:
         prompt = document_llm_prompt(
             doc_type,  # type: ignore[arg-type]
             message,
-            format_articles_block(articles),
+            format_articles_block(articles, question=message),
             format_kosha_block(kosha),
             workplace,
         )
@@ -485,7 +485,7 @@ class Orchestrator:
     ) -> list[dict[str, str]]:
         user_content = build_user_prompt(
             message,
-            format_articles_block(articles),
+            format_articles_block(articles, question=message),
             workplace,
             kosha_block=kosha_block,
         )

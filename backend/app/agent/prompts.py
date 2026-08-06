@@ -13,17 +13,22 @@ SYSTEM_PROMPT = """당신은 산업안전·중대재해 분야 법규 도우미 
 3. 조문 인용은 문장 안에만 `[법령정식명 제N조]` 로 한 번 넣으세요.
    - 같은 조문을 문장 뒤·다음 줄에 다시 쓰지 마세요.
    - 인용만 있는 단독 줄 금지. (UI가 문장 안 링크·하단 카드로 보여 줍니다)
-4. 근거가 부족하면 "해당 조항을 확인할 수 없습니다"라고 말하고, 확인이 필요한 부분을 명시하세요.
-5. 실무 조언은 "참고"로 구분하고, 법적 의무와 혼동되지 않게 쓰세요.
-6. [KOSHA 가이드]는 실무 참고이며 법 조항처럼 인용하지 마세요.
+4. 과태료·금액 질문: 근거에 「개별기준 행」·금액(만원)이 있으면 반드시 숫자로 답하세요.
+   - 1차·2차·3차 위반 금액을 구분 (단위: 만원 → 답변에는 "100만원"처럼 표기)
+   - 규모 감경·가중·감경 사유가 근거에 있으면 짧게 덧붙이세요
+   - 근거에 해당 행이 없으면 지어내지 말고 "해당 개별기준 행을 찾지 못했다"고 하세요
+   - "PDF를 보라"만으로 끝내지 마세요 (금액이 근거에 있을 때)
+5. 근거가 부족하면 "해당 조항을 확인할 수 없습니다"라고 말하고, 확인이 필요한 부분을 명시하세요.
+6. 실무 조언은 "참고"로 구분하고, 법적 의무와 혼동되지 않게 쓰세요.
+7. [KOSHA 가이드]는 실무 참고이며 법 조항처럼 인용하지 마세요.
    본문 발췌·PDF 링크는 UI가 따로 붙이므로, 답변 본문에는 지침번호만
    한 줄로 언급하거나 생략하세요. (긴 KOSHA 발췌 금지)
-7. 인사말·자기소개는 하지 마세요. 바로 본론으로.
-8. 답변 말미에 한 줄 면책: 참고용이며 최종 판단은 전문가/관할 기관 확인이 필요하다고 적으세요.
+8. 인사말·자기소개는 하지 마세요. 바로 본론으로.
+9. 답변 말미에 한 줄 면책: 참고용이며 최종 판단은 전문가/관할 기관 확인이 필요하다고 적으세요.
 
 ## 답변 형식
-- 결론 1~3문장 (질문에 yes/no가 있으면 먼저)
-- 관련 조문은 문장 속 `[법령명 제N조]` 한 번만 (중복·단독 줄 금지)
+- 결론 1~3문장 (질문에 yes/no·금액이 있으면 먼저 금액)
+- 관련 조문은 문장 속 `[법령명 제N조]` / `[… 별표 N]` 한 번만
 - KOSHA 장황한 나열·페이지 발췌 금지 (UI 카드로 표시됨)
 """
 
@@ -57,15 +62,189 @@ def _article_label(a) -> str:
     return f"{law} 제{art}조"
 
 
-def _byeol_llm_excerpt(body: str, max_len: int = 700) -> str:
-    """별표 전문(수만 자 표)을 LLM에 넣지 않고 앞 설명·구조만.
+# 질문 동의어 → 별표 본문 검색어 (미부착 등 구어체)
+_BYEOL_QUERY_EXPAND: list[tuple[re.Pattern[str], list[str]]] = [
+    (re.compile(r"msds|물질안전|물질\s*안전\s*보건", re.I), ["물질안전보건", "물질안전"]),
+    (
+        re.compile(r"미부착|미게시|미비치|안\s*붙|안\s*달|게시\s*안|갖추"),
+        ["게시하지", "갖추어 두지", "게시", "갖추"],
+    ),
+    (re.compile(r"미제공|안\s*주|제공\s*안"), ["제공하지", "제공"]),
+    (re.compile(r"미제출|제출\s*안"), ["제출하지", "제출"]),
+    (re.compile(r"경고\s*표시|경고표지|라벨"), ["경고표시", "경고"]),
+    (re.compile(r"과태료"), ["과태료"]),
+    (re.compile(r"안전관리자"), ["안전관리자"]),
+    (re.compile(r"보건관리자"), ["보건관리자"]),
+    (re.compile(r"산업안전보건위원회|산안위"), ["산업안전보건위원회"]),
+    (re.compile(r"안전보건교육|교육"), ["교육"]),
+    (re.compile(r"위험성\s*평가"), ["위험성평가", "위험성 평가"]),
+]
 
-    UI 카드/PDF에 전문이 있으므로, 모델에는 존재·제목·일반기준 요지만.
-    """
+
+def _byeol_query_terms(question: str) -> list[str]:
+    """질문 → 별표 행 검색용 키워드 (확장 포함)."""
+    q = (question or "").strip()
+    terms: list[str] = []
+    seen: set[str] = set()
+    for pat, expand in _BYEOL_QUERY_EXPAND:
+        if pat.search(q):
+            for t in expand:
+                if t not in seen:
+                    seen.add(t)
+                    terms.append(t)
+    stop = {
+        "얼마", "금액", "인가요", "해주세요", "알려", "알려줘", "뭐야", "얼마야",
+        "경우", "위반", "관련", "기준", "부과", "내용", "확인", "대한", "해서",
+        "하는", "있는", "없는", "인가요", "입니까",
+    }
+    for m in re.finditer(r"[가-힣A-Za-z0-9]{2,}", q):
+        tok = m.group(0)
+        if tok in stop or tok.lower() in stop:
+            continue
+        if tok not in seen:
+            seen.add(tok)
+            terms.append(tok)
+    return terms[:16]
+
+
+def _normalize_byeol_text(body: str) -> str:
+    """박스문자 표 → 검색 가능한 평문."""
+    t = body or ""
+    t = re.sub(r"[┌┐└┘├┤┬┴┼─│┃━┏┓┗┛┣┫┳┻╋]+", " ", t)
+    t = re.sub(r"[|｜]{2,}", " ", t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{2,}", "\n", t)
+    return t
+
+
+def _extract_relevant_byeol_rows(
+    body: str, question: str, max_chars: int = 1100
+) -> str:
+    """질문 키워드가 있는 별표 개별기준 구간만 발췌 (금액 행 포함)."""
+    terms = _byeol_query_terms(question)
+    if not terms or not body:
+        return ""
+    flat = _normalize_byeol_text(body)
+    m4 = re.search(r"4\.\s*개별기준", flat)
+    area = flat[m4.start() :] if m4 else flat
+
+    # 핵심 키워드(주제) — 창 점수에 가중
+    core = [
+        t
+        for t in terms
+        if t
+        in {
+            "물질안전보건",
+            "물질안전",
+            "게시하지",
+            "갖추어 두지",
+            "경고표시",
+            "안전관리자",
+            "보건관리자",
+            "산업안전보건위원회",
+            "위험성평가",
+            "위험성 평가",
+            "제출하지",
+            "제공하지",
+        }
+    ]
+    if not core:
+        core = terms[:4]
+
+    # 모든 매치 위치
+    positions: list[int] = []
+    for term in terms:
+        start = 0
+        n_term = 0
+        while n_term < 4:
+            i = area.find(term, start)
+            if i < 0:
+                break
+            positions.append(i)
+            start = i + max(len(term), 1)
+            n_term += 1
+
+    if not positions:
+        return ""
+
+    need_msds = any(t in terms for t in ("물질안전보건", "물질안전"))
+    need_post = any(t in terms for t in ("게시하지", "갖추어 두지", "게시", "갖추"))
+
+    def window_score(pos: int) -> int:
+        w = area[max(0, pos - 120) : pos + 400]
+        # MSDS+미부착 질문: 물질안전 없는 창은 제외 (규정 게시 등 노이즈)
+        if need_msds and ("물질안전" not in w):
+            return -1
+        if need_msds and need_post and not any(
+            x in w for x in ("게시", "갖추", "제공", "제출", "경고")
+        ):
+            return -1
+        s = 0
+        for t in core:
+            if t in w:
+                s += 3
+        for t in terms:
+            if t in w:
+                s += 1
+        # 금액 숫자 패턴(1차·2차·3차 추정)
+        if re.search(r"\d{1,4}\s+\d{1,4}\s+\d{1,4}", w):
+            s += 2
+        return s
+
+    # 점수 높은 위치 우선, 겹침 제거
+    ranked = sorted(set(positions), key=lambda p: (-window_score(p), p))
+    merged: list[str] = []
+    used: list[tuple[int, int]] = []
+    for pos in ranked:
+        sc = window_score(pos)
+        if sc < 3:
+            continue
+        a = max(0, pos - 160)
+        b = min(len(area), pos + 450)
+        chunk = area[a:b]
+        head = re.search(
+            r"(?:[가-힣]{1,3}\.|[0-9]+\)|[가나다라마바사아자차카타파하]\))\s*법\s*제",
+            chunk,
+        )
+        if head and head.start() < 120:
+            chunk = chunk[head.start() :]
+        chunk = re.sub(r"\s{2,}", " ", chunk).strip()
+        if len(chunk) < 40:
+            continue
+        # 겹치면 스킵
+        if any(abs(pos - u0) < 200 for u0, _ in used):
+            continue
+        used.append((pos, pos + len(chunk)))
+        merged.append(chunk)
+        if sum(len(x) for x in merged) >= max_chars or len(merged) >= 3:
+            break
+
+    if not merged:
+        # 폴백: 점수 무시하고 첫 매치 1개
+        pos = ranked[0]
+        a, b = max(0, pos - 160), min(len(area), pos + 450)
+        chunk = re.sub(r"\s{2,}", " ", area[a:b]).strip()
+        if chunk:
+            merged = [chunk]
+
+    if not merged:
+        return ""
+    out = "\n\n---\n".join(merged)
+    if len(out) > max_chars:
+        out = out[:max_chars].rstrip() + "…"
+    return (
+        "【질문 관련 개별기준 발췌 — 과태료 금액 단위: 만원 (1차·2차·3차 위반)】\n"
+        + out
+        + "\n\n(※ 위 숫자는 별표 표의 만원 단위. 예: 100 → 100만원. "
+        "사업장 규모 감경·가중·감경 사유는 일반기준 참고. 금액을 지어내지 말고 이 행만 인용.)"
+    )
+
+
+def _byeol_general_head(body: str, max_len: int = 500) -> str:
+    """별표 일반기준(1~3) 요약 — 개별기준 표 이전."""
     t = (body or "").strip()
     if not t:
-        return "(본문 없음 — UI 별표 PDF 확인)"
-    # 박스 표·개별기준 표 이전까지만
+        return ""
     cut = re.search(
         r"(?:^|\n)\s*(?:4\.\s*개별기준|[┌┐└┘├┤┬┴┼─│]|\|{3,})",
         t,
@@ -75,36 +254,62 @@ def _byeol_llm_excerpt(body: str, max_len: int = 700) -> str:
     t = re.sub(r"\n{3,}", "\n\n", t)
     if len(t) > max_len:
         t = _clean_excerpt(t, max_len)
+    return t
+
+
+def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str:
+    """별표 → 일반기준 요약 + (질문 관련 시) 개별 금액 행.
+
+    전문 3만 자는 넣지 않음. 질문 키워드로 행만 뽑아 금액 답변 가능하게.
+    """
+    t = (body or "").strip()
+    if not t:
+        return "(본문 없음 — UI 별표 PDF 확인)"
+
+    head = _byeol_general_head(t, max_len=min(max_len, 480))
+    rows = _extract_relevant_byeol_rows(t, question, max_chars=1100) if question else ""
+
+    if rows:
+        parts = []
+        if head:
+            parts.append(head)
+        parts.append(rows)
+        return "\n\n".join(parts)
+
+    # 관련 행 없음: 일반기준만 + 안내
+    if not head:
+        head = _clean_excerpt(t, max_len)
     return (
-        t
-        + "\n\n(※ 개별 위반행위별 과태료 금액 표 전문은 UI 별표 PDF에 있음. "
-        "금액 표를 지어내지 말고, 별표 PDF·카드를 보라고 안내하세요.)"
+        head
+        + "\n\n(※ 질문과 직접 맞는 개별기준 행을 자동 발췌하지 못함. "
+        "금액을 지어내지 말고, 확인 불가·별표 PDF/카드 확인을 안내하세요.)"
     )
 
 
-def _article_llm_body(a) -> str:
+def _article_llm_body(a, question: str = "") -> str:
     """LLM용 조문/별표 본문 — UI용 전문과 분리 (토큰 절감)."""
     art = str(getattr(a, "article_no", "") or "")
     body = getattr(a, "body", "") or ""
     if art.startswith("별표") or art.startswith("별지"):
-        return _byeol_llm_excerpt(body, 700)
+        return _byeol_llm_excerpt(body, question=question, max_len=700)
     # 일반 조문: 항 2개 분량 정도
     return _law_excerpt(body, max_hang=2) or _clean_excerpt(body, 600)
 
 
-def format_articles_block(articles: list) -> str:
+def format_articles_block(articles: list, question: str = "") -> str:
     """LLM 프롬프트용. UI cards 의 전문과 달리 발췌만 넣음.
 
     별표 3만 자 표 전문을 넣으면 Groq 한도·타임아웃·비용이 폭증함.
+    질문 관련 별표 행(금액)만 골라 붙임.
     """
     if not articles:
         return "(검색된 조문 없음 — 법적 주장을 하지 말고 확인 불가 안내)"
     blocks = []
     total = 0
-    budget = 4500  # 대략 전체 근거 블록 상한 (문자)
+    budget = 5200  # 개별 금액 행 포함 여유
     for a in articles:
         label = _article_label(a)
-        body = _article_llm_body(a)
+        body = _article_llm_body(a, question=question)
         chunk = f"### [{label}] {getattr(a, 'title', '') or ''}\n{body}"
         if total + len(chunk) > budget and blocks:
             blocks.append(
