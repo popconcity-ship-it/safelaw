@@ -73,11 +73,19 @@ async def kosha_pdf_stats():
 
 @router.get("/kosha/pdf/file/{code}")
 async def kosha_pdf_file(code: str):
-    """원문 PDF 보기 — 로컬 파일 우선, 없으면 R2 presigned 리다이렉트."""
+    """원문 PDF 보기 — 로컬 파일 우선, 없으면 R2 presigned 리다이렉트.
+
+    R2에 키가 없으면 프리사인 리다이렉트하지 않음 (브라우저 NoSuchKey XML 방지).
+    """
     from fastapi.responses import FileResponse, RedirectResponse
 
     from ..kosha.pdf_pipeline import local_pdf_path
-    from ..kosha.r2 import presigned_pdf_url, public_pdf_url, r2_enabled
+    from ..kosha.r2 import (
+        pdf_file_available,
+        presigned_pdf_url,
+        public_pdf_url,
+        r2_enabled,
+    )
 
     safe = _safe_code(code)
     path = local_pdf_path(safe) or local_pdf_path(code)
@@ -90,6 +98,17 @@ async def kosha_pdf_file(code: str):
             headers={"Cache-Control": "public, max-age=3600"},
         )
 
+    # 시드 한글 코드 등 — 파일 없으면 친절한 404
+    if not pdf_file_available(safe) and not pdf_file_available(code):
+        raise HTTPException(
+            404,
+            detail=(
+                f"원문 PDF를 찾을 수 없습니다 ({code}). "
+                "시드 요약이거나 미업로드 지침일 수 있습니다. "
+                "산업안전포털에서 지침번호로 검색해 주세요."
+            ),
+        )
+
     pub = public_pdf_url(safe) or public_pdf_url(code)
     if pub:
         return RedirectResponse(pub, status_code=302)
@@ -98,9 +117,8 @@ async def kosha_pdf_file(code: str):
         url = presigned_pdf_url(safe) or presigned_pdf_url(code)
         if url:
             return RedirectResponse(url, status_code=302)
-        raise HTTPException(404, f"R2 PDF 없음 또는 서명 실패: {code}")
 
-    raise HTTPException(404, f"PDF 없음 (로컬·R2 미설정): {code}")
+    raise HTTPException(404, detail=f"PDF 없음: {code}")
 
 
 @router.get("/kosha/pdf/priority")

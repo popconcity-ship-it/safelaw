@@ -62,22 +62,78 @@ def public_pdf_url(code: str, settings: Settings | None = None) -> str | None:
     return f"{base}/{code.strip()}.pdf"
 
 
+def r2_key_exists(code: str) -> bool:
+    """R2에 {code}.pdf 가 있는지 HEAD. 시드 한글 코드(중대재해 등)는 없음."""
+    s = get_settings()
+    if not r2_enabled(s) or not (code or "").strip():
+        return False
+    # 정식 지침번호 형태가 아니면 R2 키로 쓰지 않음 (NoSuchKey 방지)
+    import re
+
+    c = code.strip()
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,40}$", c):
+        return False
+    if any(ord(ch) > 127 for ch in c):
+        return False
+    try:
+        return _r2_head_cached(c, _client_fingerprint())
+    except Exception as e:
+        logger.debug("R2 head %s: %s", c, e)
+        return False
+
+
+@lru_cache(maxsize=4096)
+def _r2_head_cached(code: str, _fp: str) -> bool:
+    s = get_settings()
+    key = r2_object_key(code, s)
+    try:
+        _s3_client().head_object(Bucket=s.r2_bucket.strip(), Key=key)
+        return True
+    except Exception:
+        return False
+
+
+def pdf_file_available(code: str) -> bool:
+    """로컬 PDF · 인제스트 인덱스 · R2 실파일 중 하나라도 있을 때만 True."""
+    if not (code or "").strip():
+        return False
+    from .pdf_pipeline import indexed_codes, local_pdf_path
+
+    if local_pdf_path(code):
+        return True
+    # 청크 인덱스에 있으면 원본을 인제스트한 적 있음 → R2/로컬 존재 가능성 높음
+    try:
+        if code in set(indexed_codes()):
+            # 배포 이미지는 PDF 미포함 → R2 확인
+            if r2_enabled():
+                return r2_key_exists(code)
+            return True
+    except Exception:
+        pass
+    if r2_enabled():
+        return r2_key_exists(code)
+    return False
+
+
 def presigned_pdf_url(code: str, *, expires: int | None = None) -> str | None:
-    """비공개 버킷용 임시 URL."""
+    """비공개 버킷용 임시 URL. 객체가 있을 때만 발급."""
     s = get_settings()
     if not r2_enabled(s) or not code:
+        return None
+    if not r2_key_exists(code):
         return None
     exp = expires if expires is not None else int(s.r2_presign_ttl or 3600)
     key = r2_object_key(code, s)
     try:
         client = _s3_client()
+        safe_name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in code)
         return client.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": s.r2_bucket.strip(),
                 "Key": key,
                 "ResponseContentType": "application/pdf",
-                "ResponseContentDisposition": f'inline; filename="{code}.pdf"',
+                "ResponseContentDisposition": f'inline; filename="{safe_name}.pdf"',
             },
             ExpiresIn=max(60, min(exp, 86400)),
         )
@@ -87,15 +143,10 @@ def presigned_pdf_url(code: str, *, expires: int | None = None) -> str | None:
 
 
 def resolve_pdf_url(code: str) -> str | None:
-    """브라우저용 PDF URL 우선순위: 공개 베이스 → 앱 프록시 경로(로컬/프리사인)."""
-    if not code:
+    """브라우저용 PDF URL. 실파일이 확인될 때만 반환 (가짜 링크 금지)."""
+    if not code or not pdf_file_available(code):
         return None
     pub = public_pdf_url(code)
     if pub:
         return pub
-    # 로컬 파일 또는 R2 프리사인은 /api/kosha/pdf/file/{code} 가 처리
-    from .pdf_pipeline import local_pdf_path
-
-    if local_pdf_path(code) or r2_enabled():
-        return f"/api/kosha/pdf/file/{code}"
-    return None
+    return f"/api/kosha/pdf/file/{code}"

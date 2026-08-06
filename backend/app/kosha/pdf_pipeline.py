@@ -88,7 +88,12 @@ def local_pdf_path(code: str) -> Path | None:
 
 
 def local_pdf_url(code: str) -> str | None:
-    """브라우저에서 바로 열 수 있는 PDF URL (로컬 또는 R2)."""
+    """브라우저에서 바로 열 수 있는 PDF URL (로컬 또는 R2).
+
+    시드 한글 코드(예: 중대재해)처럼 R2에 없는 키는 None — 원문 PDF 링크 숨김.
+    """
+    if not code:
+        return None
     if local_pdf_path(code):
         return f"/api/kosha/pdf/file/{code}"
     try:

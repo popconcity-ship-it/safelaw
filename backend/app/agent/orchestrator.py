@@ -102,9 +102,8 @@ class Orchestrator:
                 summary=k.summary,
                 score=k.score,
                 url=k.url,
-                pdf_url=local_pdf_url(k.code) or (
-                    k.url if (k.url or "").startswith("/api/kosha/pdf/") else ""
-                ),
+                # 실PDF 있을 때만 (시드 한글 코드 → R2 NoSuchKey 방지)
+                pdf_url=local_pdf_url(k.code) or "",
                 hazard_types=k.hazard_types,
                 source=getattr(k, "source", "seed"),
             )

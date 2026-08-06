@@ -1057,9 +1057,15 @@
         .map((k) => {
           const code = k.code || "";
           const title = k.title || code;
-          const pdf =
-            k.pdf_url ||
-            (code ? "/api/kosha/pdf/file/" + encodeURIComponent(code) : "");
+          // 서버가 실파일 확인 후에만 pdf_url 채움 — 코드로 URL 추측 금지 (NoSuchKey)
+          const pdf = (k.pdf_url || "").trim();
+          const portal =
+            k.url && String(k.url).startsWith("http")
+              ? k.url
+              : code
+                ? "https://portal.kosha.or.kr/archive/resources/tech-support/guide?searchKeyword=" +
+                  encodeURIComponent(code)
+                : "";
           let ex = (k.summary || "").trim();
           if (ex.length > 220) ex = ex.slice(0, 220).replace(/\s+\S*$/, "") + "…";
           return (
@@ -1072,8 +1078,8 @@
             (pdf
               ? `<a href="${esc(pdf)}" target="_blank" rel="noopener">📄 원문 PDF</a>`
               : "") +
-            (k.url && String(k.url).startsWith("http")
-              ? `<a href="${esc(k.url)}" target="_blank" rel="noopener">산업안전포털</a>`
+            (portal
+              ? `<a href="${esc(portal)}" target="_blank" rel="noopener">산업안전포털</a>`
               : "") +
             `</div></div>`
           );
