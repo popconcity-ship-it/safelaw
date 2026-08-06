@@ -604,19 +604,47 @@
       color: #713f12;
     }
     .msg.bot .law-bd .hang:last-child { margin-bottom: 0; }
-    .msg.bot .law-cite {
-      display: inline;
-      margin: 0;
-      padding: 0 2px;
-      border: none;
-      border-bottom: 1.5px solid #3b82f6;
-      background: transparent;
-      color: #1d4ed8;
-      font: inherit;
-      font-weight: 650;
-      cursor: pointer;
+    /* 답변 본문 가독성 */
+    .msg.bot .ans-body {
+      line-height: 1.7;
+      word-break: keep-all;
+      overflow-wrap: break-word;
+      font-size: 0.93rem;
+      color: #0f172a;
     }
-    .msg.bot .law-cite:hover { background: #dbeafe; }
+    .msg.bot .ans-body p {
+      margin: 0 0 0.75em;
+    }
+    .msg.bot .ans-body p:last-child { margin-bottom: 0; }
+    /* 조문 인용: 칩/블록 금지 — 문장 안 밑줄 링크만 */
+    .msg.bot .ans-body .law-cite,
+    .msg.bot .law-cite {
+      display: inline !important;
+      width: auto !important;
+      max-width: none !important;
+      margin: 0 1px !important;
+      padding: 0 1px !important;
+      border: none !important;
+      border-radius: 0 !important;
+      border-bottom: 1.5px solid #60a5fa !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      color: #1d4ed8 !important;
+      font: inherit !important;
+      font-weight: 650 !important;
+      font-size: inherit !important;
+      line-height: inherit !important;
+      white-space: normal !important;
+      vertical-align: baseline !important;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .msg.bot .ans-body .law-cite:hover,
+    .msg.bot .law-cite:hover {
+      background: rgba(59, 130, 246, 0.1) !important;
+      border-bottom-color: #1d4ed8 !important;
+    }
     .msg.bot .law-card.flash {
       box-shadow: 0 0 0 2px #3b82f6;
     }
@@ -1139,8 +1167,42 @@
         .replace(/>/g, "&gt;");
     }
 
+    /**
+     * 답변 전처리: 단독 인용 줄 제거 (문장 안 링크와 중복 칩 방지)
+     * 예) 본문에 제175조가 있는데 다음 줄에 또 [산업안전보건법 제175조]만 있는 경우
+     */
+    function stripStandaloneCiteLines(text) {
+      const citeOnly =
+        /^[\s\[【]*(?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙)(?:\s*시행령|\s*시행규칙)?\s*(?:제\s*\d+(?:의\d+)?\s*조|별표\s*\d+(?:의\d+)?)[\s\]】.。]*$/;
+      const byeolOnly = /^[\s\[【]*(?:[^\n]{0,40})?별표\s*\d+(?:의\d+)?[\s\]】.。]*$/;
+      const lines = String(text || "").split("\n");
+      const kept = [];
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) {
+          // 빈 줄은 문단 구분용으로 최대 1개 유지
+          if (kept.length && kept[kept.length - 1] !== "") kept.push("");
+          continue;
+        }
+        if (citeOnly.test(t) || byeolOnly.test(t)) {
+          // 직전 문단에 같은 인용 키가 있으면 스킵
+          const key = t.replace(/[\[\]【】\s.]/g, "");
+          const prev = kept.join("").replace(/\s/g, "");
+          if (prev.includes(key) || key.length < 4) continue;
+          // 단독 인용 줄은 가독성 위해 제거 (본문 인라인 링크만 남김)
+          continue;
+        }
+        kept.push(line.replace(/\s+$/, ""));
+      }
+      // 끝 빈 줄 정리
+      while (kept.length && kept[kept.length - 1] === "") kept.pop();
+      return kept.join("\n");
+    }
+
     function lightMd(text) {
-      let t = esc(text);
+      // 중복 단독 인용 줄 제거 → 문단 흐름 유지
+      let raw = stripStandaloneCiteLines(text);
+      let t = esc(raw);
       t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
       t = t.replace(/`([^`]+)`/g, "<code style='font-size:0.85em;background:var(--surface2);padding:1px 6px;border-radius:4px'>$1</code>");
       t = t.replace(/^### (.+)$/gm, "<h3 style='margin:14px 0 6px;font-size:0.95rem;color:#1e40af'>$1</h3>");
@@ -1156,8 +1218,11 @@
         return inner ? `<blockquote>${inner}</blockquote>\n` : "";
       });
       t = t.replace(/^---$/gm, "<hr style='border:none;border-top:1px solid var(--border);margin:12px 0'/>");
-      // 로컬 상대 링크도 허용
-      t = t.replace(/\[([^\]]+)\]\(((?:https?:)?[^)]+)\)/g, "<a href='$2' target='_blank' rel='noopener' style='color:var(--accent);font-size:0.85rem'>$1</a>");
+      // 로컬 상대 링크도 허용 (조문 인용 [제N조] 와 구분: URL 필수)
+      t = t.replace(
+        /\[([^\]]+)\]\(((?:https?:|\/)[^)]+)\)/g,
+        "<a href='$2' target='_blank' rel='noopener' style='color:var(--accent)'>$1</a>"
+      );
       t = t.replace(/^[\-\*] (.+)$/gm, "<div style='margin:3px 0 3px 2px'>• $1</div>");
       t = t.replace(/^_(.+)_$/gm, "<p style='color:var(--muted);font-size:0.8rem;margin-top:8px'>$1</p>");
       // simple GFM tables
@@ -1177,7 +1242,18 @@
       });
       // 조문 인용 → 클릭 시 아래 카드로 이동 (예: [산안법 제36조])
       t = linkifyLawCites(t);
-      return t;
+      // 문단 구성 (가독성)
+      t = t
+        .split(/\n{2,}/)
+        .map((para) => {
+          const p = para.trim();
+          if (!p) return "";
+          if (/^<(?:h3|hr|table|blockquote|div|p)\b/i.test(p)) return p;
+          return `<p>${p.replace(/\n/g, "<br>")}</p>`;
+        })
+        .filter(Boolean)
+        .join("");
+      return `<div class="ans-body">${t}</div>`;
     }
 
     /** 법령명 정규화 (카드 data-law 매칭용) */
