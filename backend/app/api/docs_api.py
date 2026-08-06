@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -23,6 +24,38 @@ from ..models.schemas import (
 from ..security import require_admin
 
 router = APIRouter(prefix="/api", tags=["docs-kosha"])
+
+_BYEOL_PAGE_INDEX: dict | None = None
+
+
+def _load_byeol_page_index() -> dict:
+    """data/law/byeol_page_index.json (빌드 스크립트 산출물)."""
+    global _BYEOL_PAGE_INDEX
+    if _BYEOL_PAGE_INDEX is not None:
+        return _BYEOL_PAGE_INDEX
+    path = (
+        Path(__file__).resolve().parents[3] / "data" / "law" / "byeol_page_index.json"
+    )
+    if not path.is_file():
+        _BYEOL_PAGE_INDEX = {"version": 0, "count": 0, "by_fl_seq": {}}
+        return _BYEOL_PAGE_INDEX
+    try:
+        _BYEOL_PAGE_INDEX = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        _BYEOL_PAGE_INDEX = {"version": 0, "count": 0, "by_fl_seq": {}}
+    return _BYEOL_PAGE_INDEX
+
+
+@router.get("/law/byeol-page-index")
+async def byeol_page_index(fl_seq: int | None = Query(None, ge=1)):
+    """별표 PDF 페이지 인덱스. fl_seq 있으면 해당 건만."""
+    data = _load_byeol_page_index()
+    if fl_seq is not None:
+        entry = (data.get("by_fl_seq") or {}).get(str(fl_seq))
+        if not entry:
+            raise HTTPException(404, f"page index 없음 fl_seq={fl_seq}")
+        return entry
+    return data
 
 
 @router.get("/law/attach")

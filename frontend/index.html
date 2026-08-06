@@ -713,6 +713,15 @@
       gap: 6px;
       flex-wrap: wrap;
     }
+    .msg.bot .fine-page-badge {
+      margin-left: auto;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #0284c7;
+      color: #fff;
+    }
     .msg.bot .fine-box-hd .fine-unit {
       font-weight: 500;
       color: #92400e;
@@ -2476,13 +2485,135 @@
       };
     }
 
+    /** 별표 PDF 페이지 인덱스 캐시 (fl_seq → entry) */
+    const byeolPageCache = Object.create(null);
+
+    function flSeqFromPdfUrl(pdfUrl) {
+      const m = String(pdfUrl || "").match(/fl_seq=(\d+)/);
+      return m ? m[1] : "";
+    }
+
+    function pdfUrlWithPage(pdfUrl, page) {
+      if (!pdfUrl) return "";
+      const base = String(pdfUrl).split("#")[0];
+      const p = parseInt(page, 10);
+      if (p >= 1) return base + "#page=" + p;
+      return base;
+    }
+
+    /**
+     * fine 메타 + 페이지 인덱스로 PDF 쪽수 추정
+     * 우선순위: 항 라벨(키. 법 제114조) → 의무 조문 번호 → 검색어 부분일치
+     */
+    function resolveByeolPage(entry, fine) {
+      if (!entry || !fine) return null;
+      const byLabel = entry.by_label || {};
+      const byArt = entry.by_article || {};
+      const keys = fine.searchKeys || [];
+      for (const k of keys) {
+        if (byLabel[k]) return byLabel[k];
+      }
+      // "키. 법 제114조제1항" → "키. 법 제114조"
+      for (const k of keys) {
+        const short = k.replace(/(제\d+조).*$/, "$1");
+        if (byLabel[short]) return byLabel[short];
+        for (const [lab, pg] of Object.entries(byLabel)) {
+          if (lab.startsWith(short) || short.startsWith(lab) || lab.includes(k) || k.includes(lab)) {
+            return pg;
+          }
+        }
+      }
+      if (fine.itemKey && fine.duty) {
+        const artM = String(fine.duty).match(/제\s*(\d+)\s*조/);
+        if (artM) {
+          const lab = `${fine.itemKey} 법 제${artM[1]}조`;
+          if (byLabel[lab]) return byLabel[lab];
+        }
+      }
+      if (fine.duty) {
+        const artM = String(fine.duty).match(/제\s*(\d+)\s*조/);
+        if (artM && byArt[artM[1]]) return byArt[artM[1]];
+      }
+      return null;
+    }
+
+    async function ensureByeolPageEntry(flSeq) {
+      if (!flSeq) return null;
+      if (byeolPageCache[flSeq]) return byeolPageCache[flSeq];
+      try {
+        const r = await fetch("/api/law/byeol-page-index?fl_seq=" + encodeURIComponent(flSeq));
+        if (!r.ok) return null;
+        const entry = await r.json();
+        byeolPageCache[flSeq] = entry;
+        return entry;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    /** 비동기: fine-box 에 페이지 점프 버튼 보강 */
+    async function hydrateFineBoxPages(root) {
+      const boxes = (root || messagesEl).querySelectorAll(".fine-find[data-pdf]");
+      for (const box of boxes) {
+        if (box.getAttribute("data-page-ready") === "1") continue;
+        const pdf = box.getAttribute("data-pdf") || "";
+        const fl = flSeqFromPdfUrl(pdf);
+        const entry = await ensureByeolPageEntry(fl);
+        const fineMeta = {
+          searchKeys: (box.getAttribute("data-search-keys") || "")
+            .split("||")
+            .filter(Boolean),
+          duty: box.getAttribute("data-duty") || "",
+          itemKey: box.getAttribute("data-item-key") || "",
+        };
+        const page = resolveByeolPage(entry, fineMeta);
+        box.setAttribute("data-page-ready", "1");
+        if (!page) continue;
+        box.setAttribute("data-page", String(page));
+        const total = entry && entry.pages ? entry.pages : "";
+        const tip = box.querySelector(".fine-find-tip");
+        if (tip) {
+          tip.innerHTML =
+            `<strong>PDF ${page}쪽</strong>` +
+            (total ? ` / 전체 ${total}쪽` : "") +
+            ` · 항 표지 <strong>${esc(fineMeta.itemKey || "")}</strong> 근처` +
+            ` · 그래도 안 보이면 Ctrl+F / ⌘F 로 검색어 붙여넣기`;
+        }
+        const actions = box.querySelector(".fine-find-actions");
+        if (actions && pdf) {
+          const href = pdfUrlWithPage(pdf, page);
+          // 페이지 점프 버튼을 맨 앞에
+          const a = document.createElement("a");
+          a.className = "primary";
+          a.href = href;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.textContent = `📄 ${page}쪽으로 열기`;
+          actions.insertBefore(a, actions.firstChild);
+          // 기존 primary 버튼 문구 조정
+          const old = actions.querySelector(".fine-open-pdf-find");
+          if (old) {
+            old.textContent = `${page}쪽 열기 + 검색어 복사`;
+            old.setAttribute("data-page", String(page));
+          }
+        }
+        const pageBadge = box.closest(".fine-box")?.querySelector(".fine-page-badge");
+        if (pageBadge) {
+          pageBadge.textContent = `p.${page}`;
+          pageBadge.hidden = false;
+        }
+      }
+    }
+
     function renderFineBox(fine, pdfUrl) {
       if (!fine || !fine.rows || !fine.rows.length) return "";
       const head =
         `<div class="fine-box-hd">과태료 금액` +
         `<span class="fine-unit">단위: ${esc(fine.unit || "만원")} · 1·2·3차 위반` +
         (fine.unitNote ? ` · ${esc(fine.unitNote)}` : "") +
-        `</span></div>`;
+        `</span>` +
+        `<span class="fine-page-badge" hidden></span>` +
+        `</div>`;
 
       // 별표 어디를 인용했는지
       const cite =
@@ -2522,7 +2653,7 @@
       });
       table += `</tbody></table>`;
 
-      // PDF 점프 도우미
+      // PDF 점프 도우미 (페이지는 hydrateFineBoxPages 가 채움)
       const keys = fine.searchKeys || [];
       const primaryKey = keys[0] || fine.duty || "";
       let findBox = "";
@@ -2534,18 +2665,19 @@
           )
           .join("");
         findBox =
-          `<div class="fine-find" data-pdf="${esc(pdfUrl || "")}" data-primary-key="${esc(primaryKey)}">` +
+          `<div class="fine-find" data-pdf="${esc(pdfUrl || "")}" data-primary-key="${esc(primaryKey)}"` +
+          ` data-search-keys="${esc(keys.join("||"))}"` +
+          ` data-duty="${esc(fine.duty || "")}"` +
+          ` data-item-key="${esc(fine.itemKey || "")}">` +
           `<div class="fine-find-hd">PDF 원본에서 이 행 찾기</div>` +
           `<div class="fine-find-tip">` +
-          `전체 별표는 길어서 스크롤로 찾기 어렵습니다. ` +
-          `<strong>검색어를 복사한 뒤 PDF에서 Ctrl+F (Mac: ⌘F)</strong>로 붙여넣으면 ` +
-          `<strong>${esc(fine.itemKey || "해당 항")}</strong> 근처로 바로 갑니다.` +
+          `페이지 인덱스를 불러오는 중… 또는 검색어 복사 후 Ctrl+F / ⌘F` +
           `</div>` +
           (keyBtns ? `<div class="fine-find-keys">${keyBtns}</div>` : "") +
           `<div class="fine-find-actions">` +
           (pdfUrl
             ? `<button type="button" class="primary fine-open-pdf-find">PDF 열기 + 검색어 복사</button>` +
-              `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">PDF만 열기</a>`
+              `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">PDF 처음부터</a>`
             : "") +
           `</div>` +
           `<div class="fine-find-toast" aria-live="polite"></div>` +
@@ -3301,6 +3433,8 @@
         pending.classList.remove("is-typing");
         pending.innerHTML =
           renderBotAnswer(data.answer, arts, koshaSrc, q) + renderMeta(data);
+        // 별표 PDF 페이지 인덱스 → "17쪽으로 열기"
+        hydrateFineBoxPages(pending).catch(() => {});
         pending.querySelectorAll("[data-copy]").forEach((btn) => {
           btn.addEventListener("click", () => {
             const doc = window.__docs?.[btn.getAttribute("data-copy")];
@@ -3411,14 +3545,18 @@
         if (!box) return;
         const pdf = (box.getAttribute("data-pdf") || "").trim();
         const key = (box.getAttribute("data-primary-key") || "").trim();
+        const page = box.getAttribute("data-page") || openFind.getAttribute("data-page") || "";
         const toast = box.querySelector(".fine-find-toast");
+        const openUrl = pdfUrlWithPage(pdf, page);
         copyTextToClipboard(key).then((ok) => {
           if (toast) {
             toast.textContent = ok
-              ? `검색어 「${key}」 복사됨 → 열린 PDF에서 Ctrl+F / ⌘F`
+              ? (page
+                  ? `p.${page} 열림 · 검색어 「${key}」 복사됨 (안 보이면 Ctrl+F)`
+                  : `검색어 「${key}」 복사됨 → PDF에서 Ctrl+F / ⌘F`)
               : "PDF를 연 뒤 위 검색어 버튼으로 복사하세요";
           }
-          if (pdf) window.open(pdf, "_blank", "noopener,noreferrer");
+          if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         });
         return;
       }
