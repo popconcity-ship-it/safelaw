@@ -735,19 +735,35 @@ class Orchestrator:
                         continue
                     if articles and self._llm_refused(text):
                         last_err = f"refusal on {model}"
+                        logger.warning("Groq refusal-like on %s: %s", model, text[:120])
                         continue
                     return text
                 except Exception as e:
-                    last_err = f"{model}: {e}"
+                    err_s = str(e)
+                    # 무료 티어 한도·모델 오류 등 — 짧은 코드만 사용자 메시지에
+                    if "429" in err_s or "rate_limit" in err_s.lower():
+                        last_err = "요청 한도(rate limit) 초과"
+                    elif "401" in err_s or "invalid_api_key" in err_s.lower():
+                        last_err = "API 키 오류"
+                    elif "timeout" in err_s.lower() or "Timeout" in err_s:
+                        last_err = "응답 시간 초과"
+                    elif "model" in err_s.lower() and (
+                        "not found" in err_s.lower() or "decommissioned" in err_s.lower()
+                    ):
+                        last_err = f"모델 불가({model})"
+                    else:
+                        last_err = f"{model}: {err_s[:80]}"
                     logger.warning("Groq error on %s: %s", model, e)
                     continue
         except Exception as e:
             logger.exception("Groq error: %s", e)
-            last_err = str(e)
+            last_err = str(e)[:100]
 
+        reason = last_err or "호출 실패"
         note = (
-            f"\n\n---\n_AI 요약 일시 불가(Groq) · "
-            "아래는 검색된 조문·가이드 기반 안내입니다._"
+            f"\n\n---\n_AI 요약 일시 불가(Groq · {reason}) · "
+            "아래는 검색된 조문·가이드 기반 안내입니다. "
+            "잠시 후 다시 시도하거나, 조문·별표 카드로 확인하세요._"
         )
         return demo_answer(message, articles, kosha_hits) + note
 
