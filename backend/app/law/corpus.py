@@ -20,24 +20,40 @@ CORPUS_PATH = _DATA_DIR / "corpus.jsonl"
 
 
 def normalize_law_body(body: str) -> str:
-    """법제처 XML 파싱 잔여: 번호만 있는 줄 + 같은 번호 본문 줄 중복 제거.
+    """법제처 XML 파싱 잔여 정리.
 
-    예::
-        ①\\n① 산업안전지도사는…  →  ① 산업안전지도사는…
-        1.\\n1. 공정상의…        →  1. 공정상의…
+    - 항 기호만 있는 줄 + 같은 번호 본문 → 본문만
+    - 고아 호/목 번호
+    - 개정·신설·날짜 메타 단독 줄 (본문에 이미 <개정 …> 있음)
+      예:: ① / 개정 / 2026.2.19 / ① 사업주는…  →  ① 사업주는…
     """
     if not body:
         return ""
     t = str(body).replace("\r\n", "\n").replace("\r", "\n")
     lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
     hang_only = set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮")
+    meta_words = {"개정", "신설", "삭제", "전문개정", "일부개정"}
+    date_re = re.compile(r"^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$")
+
+    def _is_noise(ln: str) -> bool:
+        if ln in hang_only:
+            return True
+        if ln in meta_words:
+            return True
+        if date_re.match(ln):
+            return True
+        # 본문 끝 꼬리만 남은 경우
+        if re.fullmatch(r"<\s*(개정|신설|삭제)[^>]*>", ln):
+            return True
+        return False
+
     out: list[str] = []
     i = 0
     while i < len(lines):
         ln = lines[i]
         nxt = lines[i + 1] if i + 1 < len(lines) else None
-        # 고아 항 기호 (다음 줄이 같은 기호로 시작)
-        if ln in hang_only and nxt and nxt.startswith(ln):
+        # 메타·단독 항번호 줄 스킵
+        if _is_noise(ln):
             i += 1
             continue
         # 고아 호 번호 "1." / "12."

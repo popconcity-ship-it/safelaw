@@ -1154,13 +1154,16 @@
     }
 
     /**
-     * 법제처 파싱 잔여: 번호만 있는 줄 + 같은 번호 본문 중복 제거
-     *  ①\\n① 본문… → ① 본문…   /   1.\\n1. 항목 → 1. 항목
+     * 법제처 XML 잔여 정리
+     *  ① / 개정 / 2026.2.19 / ① 본문… → ① 본문…
+     *  1. / 1. 항목 → 1. 항목
      */
     function normalizeLawBody(body) {
       let t = String(body || "").replace(/\r/g, "").trim();
       if (!t) return "";
       const hangOnly = new Set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮".split(""));
+      const metaWords = new Set(["개정", "신설", "삭제", "전문개정", "일부개정"]);
+      const dateRe = /^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/;
       const raw = t
         .split("\n")
         .map((l) => l.trim())
@@ -1169,7 +1172,11 @@
       for (let i = 0; i < raw.length; i++) {
         const ln = raw[i];
         const nxt = raw[i + 1];
-        if (hangOnly.has(ln) && nxt && nxt.startsWith(ln)) continue;
+        // 단독 항번호 · 개정/신설 · 날짜 메타 줄
+        if (hangOnly.has(ln)) continue;
+        if (metaWords.has(ln)) continue;
+        if (dateRe.test(ln)) continue;
+        if (/^<\s*(개정|신설|삭제)[^>]*>$/.test(ln)) continue;
         const mNum = ln.match(/^(\d+)\.$/);
         if (mNum && nxt && (nxt.startsWith(mNum[0]) || nxt.startsWith(mNum[1] + ".")))
           continue;
