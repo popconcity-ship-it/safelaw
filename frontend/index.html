@@ -702,6 +702,20 @@
       border-radius: 12px;
       border: 1px solid #fcd34d;
       background: linear-gradient(180deg, #fffbeb 0%, #fff 100%);
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
+      overflow: visible;
+    }
+    @media (max-width: 480px) {
+      .msg.bot .fine-box { padding: 8px 8px; }
+      .msg.bot .fine-amts b { font-size: 0.88rem; }
+      .msg.bot .fine-find-actions .primary,
+      .msg.bot .fine-find-actions a,
+      .msg.bot .fine-find-actions button {
+        width: 100%;
+        justify-content: center;
+      }
     }
     .msg.bot .fine-box-hd {
       font-size: 0.78rem;
@@ -727,38 +741,81 @@
       color: #92400e;
       font-size: 0.72rem;
     }
-    .msg.bot .fine-box table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.82rem;
-      display: table;
-      overflow: visible;
-      margin: 0;
+    /* 금액: 카드 스택 (모바일 가로 잘림 방지 — msg overflow-x:clip) */
+    .msg.bot .fine-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0 0 4px;
+      min-width: 0;
+      max-width: 100%;
     }
-    .msg.bot .fine-box th,
-    .msg.bot .fine-box td {
+    .msg.bot .fine-meta-block {
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: #57534e;
+      padding: 8px 10px;
+      background: #fff7ed;
+      border-radius: 10px;
       border: 1px solid #fde68a;
-      padding: 6px 8px;
-      text-align: left;
-      vertical-align: top;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
     }
-    .msg.bot .fine-box th {
-      background: #fef3c7;
-      color: #92400e;
-      font-weight: 650;
-      white-space: nowrap;
-    }
-    .msg.bot .fine-box td.amt {
+    .msg.bot .fine-meta-block strong {
+      color: #c2410c;
       font-weight: 700;
+    }
+    .msg.bot .fine-row-card {
+      border: 1px solid #fde68a;
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px 10px 8px;
+      min-width: 0;
+    }
+    .msg.bot .fine-row-desc {
+      font-size: 0.84rem;
+      line-height: 1.4;
+      color: #1c1917;
+      font-weight: 600;
+      margin-bottom: 8px;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+    .msg.bot .fine-amts {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .msg.bot .fine-amts span {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 8px 4px;
+      border-radius: 8px;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      min-width: 0;
+    }
+    .msg.bot .fine-amts em {
+      font-style: normal;
+      font-size: 0.68rem;
+      font-weight: 650;
+      color: #a16207;
+    }
+    .msg.bot .fine-amts b {
+      font-size: 0.95rem;
+      font-weight: 800;
       color: #9a3412;
-      white-space: nowrap;
-      text-align: right;
+      letter-spacing: -0.02em;
     }
     .msg.bot .fine-box .fine-basis {
       margin-top: 6px;
       font-size: 0.75rem;
       color: #78716c;
       line-height: 1.4;
+      overflow-wrap: anywhere;
     }
     .msg.bot .fine-box .fine-cite {
       display: flex;
@@ -787,11 +844,7 @@
       color: #57534e;
       font-size: 0.76rem;
     }
-    .msg.bot .fine-box td.desc {
-      font-size: 0.8rem;
-      line-height: 1.4;
-      word-break: keep-all;
-    }
+
     .msg.bot .fine-find {
       margin-top: 10px;
       padding: 10px 12px;
@@ -860,16 +913,7 @@
       min-height: 1.2em;
       margin-top: 6px;
     }
-    .msg.bot .fine-box table.fine-official th:nth-child(1),
-    .msg.bot .fine-box table.fine-official td:nth-child(1) {
-      min-width: 7.5rem;
-    }
-    .msg.bot .fine-box table.fine-official .col-basis {
-      font-size: 0.78rem;
-      color: #1e3a5f;
-      font-weight: 650;
-      white-space: nowrap;
-    }
+
     .msg.bot .kosha-section {
       margin: 12px 0 6px;
     }
@@ -2627,31 +2671,28 @@
           : "") +
         `</div>`;
 
-      // 원본 별표 열 구성에 맞춤: 위반행위 | 근거법조문 | 세부 | 금액
-      let table =
-        `<table class="fine-official"><thead><tr>` +
-        `<th>위반행위 (별표)</th><th>근거법조문</th><th>세부</th><th>1차</th><th>2차</th><th>3차</th>` +
-        `</tr></thead><tbody>`;
-      fine.rows.forEach((r, idx) => {
-        table += "<tr>";
-        if (idx === 0) {
-          table +=
-            `<td class="desc" rowspan="${fine.rows.length}">` +
-            esc(fine.violCol || fine.violTitle || fine.path) +
-            `</td>`;
-          table +=
-            `<td class="col-basis" rowspan="${fine.rows.length}">` +
-            esc(fine.basis || "—") +
-            `</td>`;
-        }
-        table +=
-          `<td class="desc">${esc(r.n + ") " + r.desc)}</td>` +
-          `<td class="amt">${esc(r.a1)}</td>` +
-          `<td class="amt">${esc(r.a2)}</td>` +
-          `<td class="amt">${esc(r.a3)}</td>`;
-        table += "</tr>";
-      });
-      table += `</tbody></table>`;
+      // 모바일 가로 잘림 방지: 6열 표 대신 카드 스택 (1·2·3차 금액 항상 보임)
+      let stack = `<div class="fine-stack">`;
+      stack +=
+        `<div class="fine-meta-block">` +
+        (fine.violCol || fine.violTitle
+          ? `<div><strong>위반</strong> ${esc(fine.violCol || fine.violTitle)}</div>`
+          : "") +
+        (fine.basis
+          ? `<div style="margin-top:4px"><strong>근거법조문</strong> ${esc(fine.basis)}</div>`
+          : "") +
+        `</div>`;
+      for (const r of fine.rows) {
+        stack +=
+          `<div class="fine-row-card">` +
+          `<div class="fine-row-desc">${esc(r.n + ") " + r.desc)}</div>` +
+          `<div class="fine-amts">` +
+          `<span><em>1차</em><b>${esc(r.a1)}만</b></span>` +
+          `<span><em>2차</em><b>${esc(r.a2)}만</b></span>` +
+          `<span><em>3차↑</em><b>${esc(r.a3)}만</b></span>` +
+          `</div></div>`;
+      }
+      stack += `</div>`;
 
       // PDF 점프 도우미 (페이지는 hydrateFineBoxPages 가 채움)
       const keys = fine.searchKeys || [];
@@ -2689,7 +2730,7 @@
         `위 표는 ${esc(fine.byeolLabel || "별표")} 개별기준 텍스트에서 질문 관련 행을 재구성한 것입니다. ` +
         `금액 단위: 만원 · 규모 감경·가중 가능 · 최종 확인은 PDF 원본` +
         `</div>`;
-      return `<div class="fine-box">${head}${cite}${table}${findBox}${foot}</div>`;
+      return `<div class="fine-box">${head}${cite}${stack}${findBox}${foot}</div>`;
     }
 
     /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트 + 위계 스타일) */
