@@ -310,16 +310,30 @@ def gate_answer(
     if grounded:
         return grounded, True
 
-    # 최소 폴백: 조문 라벨만
+    # 최소 폴백: 조문 핵심 한 줄 + 라벨 (빈 템플릿 지양)
     labels = []
+    bullets = []
     for a in articles[:4]:
         art = str(a.article_no)
         if art.startswith("별표") or art.startswith("별지") or art.endswith("편") or art == "개요":
             labels.append(f"[{a.law_name} {art}]")
         else:
             labels.append(f"[{a.law_name} 제{art}조]")
+        body = (a.body or "").strip()
+        # 첫 문장/항
+        m = re.search(r"[①1]\s*([^\n②2]{20,160})", body)
+        if m:
+            bullets.append(f"- {labels[-1]} {m.group(1).strip()}")
+        elif a.title:
+            bullets.append(f"- {labels[-1]} {(a.title or '').strip()}")
+    if bullets:
+        return (
+            "\n".join(bullets[:5])
+            + "\n\n상세는 아래 카드·원문을 확인하세요.\n"
+            + "※ 참고용 · 최종 판단은 전문가·관할 기관 확인"
+        ), True
     return (
-        "검색된 근거 조문을 기준으로 안내합니다. 아래 카드를 확인해 주세요.\n\n"
+        "관련 근거 조문: "
         + " · ".join(labels)
         + "\n\n※ 참고용 · 최종 판단은 전문가·관할 기관 확인"
     ), True

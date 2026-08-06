@@ -312,8 +312,11 @@ class LawClient:
                 return
             articles.append(a)
 
-        # 0) 도메인 시드
-        for law, art in domain.seed_articles:
+        from .hierarchy import expand_article_list
+
+        # 0) 도메인 시드 (+ 위계 자식)
+        seed_pairs = expand_article_list(list(domain.seed_articles), max_total=limit + 4)
+        for law, art in seed_pairs:
             cached = get_corpus_article(law, art)
             if cached:
                 _append(article_from_row(cached))
@@ -390,8 +393,9 @@ class LawClient:
                 if law_allowed(law_name, domain):
                     _append(await self.get_article(law_name, art))
 
-        # 3) 주제 맵 (도메인 허용 법령만)
+        # 3) 주제 맵 (도메인 허용 법령만) + 위계 확장
         topic_pairs = match_topic_articles(expanded)
+        topic_pairs = expand_article_list(topic_pairs, max_total=limit + 6)
         for law, art in topic_pairs:
             if not law_allowed(law, domain):
                 continue
@@ -407,7 +411,25 @@ class LawClient:
             if cached:
                 _append(article_from_row(cached))
             if len(articles) >= limit:
-                return filter_articles_by_domain(articles, domain)[:limit]
+                break
+
+        # 3-b) 이미 모은 법률 조 → 하위 규범 한 번 더
+        if len(articles) < limit:
+            parents = [
+                (a.law_name, str(a.article_no))
+                for a in articles
+                if a.law_name
+                and not str(a.article_no).startswith("별표")
+                and "시행" not in (a.law_name or "")
+            ]
+            for law, art in expand_article_list(parents, max_total=8):
+                if not law_allowed(law, domain):
+                    continue
+                cached = get_corpus_article(law, art)
+                if cached:
+                    _append(article_from_row(cached))
+                if len(articles) >= limit:
+                    break
 
         # 4) 코퍼스 전문검색 보강
         if len(articles) < limit:
@@ -417,4 +439,5 @@ class LawClient:
                 if len(articles) >= limit:
                     break
 
+        # 5) 위계 확장 후 필터 (법률 조가 있으면 무관 별표 제거는 도메인 필터)
         return filter_articles_by_domain(articles, domain)[:limit]

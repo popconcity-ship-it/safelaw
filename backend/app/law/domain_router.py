@@ -90,6 +90,7 @@ _DOMAIN_RULES: list[tuple[tuple[str, ...], Domain]] = [
             "작업내용 변경",
             "교육시간",
             "교육 언제",
+            "제29조",  # 고용노동부령 질문 등
         ),
         Domain(
             id="safety_education",
@@ -209,6 +210,13 @@ def route_domain(query: str) -> Domain:
     if not q:
         return _GENERAL
     q_l = q.lower()
+    # 제29조 + 교육/부령 맥락 → 교육 도메인
+    if re.search(r"제\s*29\s*조", q) and any(
+        k in q for k in ("교육", "고용노동부령", "부령", "근로자")
+    ):
+        for keys, dom in _DOMAIN_RULES:
+            if dom.id == "safety_education":
+                return dom
     for keys, dom in _DOMAIN_RULES:
         for k in keys:
             if k.lower() in q_l or k in q:

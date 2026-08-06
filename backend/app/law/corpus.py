@@ -108,10 +108,20 @@ def _tokens(text: str) -> list[str]:
         "한다",
         "하여야",
         "해야",
+        "되나요",
+        "되나요",
         "하나요",
         "인가요",
         "입니까",
+        "인가요",
         "언제",
+        "어떻게",
+        "무엇",
+        "뭐야",
+        "알려",
+        "알려줘",
+        "해주세요",
+        "인가요",
         "에서는",
         "에서",
         "으로",
@@ -126,6 +136,12 @@ def _tokens(text: str) -> list[str]:
         "대통령령",
         "고용노동부령",
         "고용노동부장관",
+        "질문",
+        "관련",
+        "내용",
+        "기준이",
+        "필요",
+        "인가요",
     }
     return [t for t in raw if t not in stop and len(t) >= 2]
 
@@ -404,6 +420,26 @@ def search_corpus(
                 ):
                     cand.add(d["i"])
 
+    # 질문 의도 토큰 (제목 매칭 가중)
+    intent_title = any(
+        k in q
+        for k in (
+            "교육",
+            "과태료",
+            "벌칙",
+            "처벌",
+            "위험성",
+            "지도사",
+            "MSDS",
+            "물질안전",
+            "보일러",
+            "검사",
+            "선임",
+            "도급",
+            "중대재해",
+        )
+    )
+
     hits: list[dict] = []
     for di in cand:
         d = docs[di]
@@ -416,10 +452,13 @@ def search_corpus(
             continue
         if dom.exclude_forms and (art_no.startswith("별지") or "서식" in title):
             continue
-        if dom.suppress_fine_table and art_no.startswith("별표") and "과태료" in title:
-            continue
+        if dom.suppress_fine_table and art_no.startswith("별표"):
+            # 질문 명시 별표가 아니면 과태료 표 위주 별표 억제
+            if not byeol_key:
+                continue
 
         score = 0.0
+        title_hits = 0
 
         if byeol_key and d["art_key"] == byeol_key:
             score += 25.0
@@ -431,18 +470,47 @@ def search_corpus(
 
         for t in toks:
             if t in title:
-                score += 4.0
+                score += 5.0
+                title_hits += 1
             elif t in body:
-                score += 1.0 + min(2.0, (len(t) - 2) * 0.25)
+                # 본문만 맞는 약한 매칭 (「해야」류 제거 후에도 잔여 노이즈 완화)
+                score += 0.85 + min(1.5, (len(t) - 2) * 0.2)
             elif t in law or t in art_no.lower():
                 score += 0.3
 
+        # 제목 불일치·본문 우연 일치만 있으면 크게 감점
+        if title_hits == 0 and toks:
+            score *= 0.45
+        elif title_hits >= 2:
+            score *= 1.25
+
+        # 법령 위계: 법률 조문 우선, 서식·무관 별표 감점
+        if not art_no.startswith("별표") and not art_no.startswith("별지"):
+            if "시행규칙" not in law and "시행령" not in law and "기준에 관한 규칙" not in law:
+                if law.endswith("법") or "법률" in law:
+                    score *= 1.15
         if "별표" in q and not art_no.startswith("별표") and not art_no.startswith("별지"):
             score *= 0.35
 
-        # 서식(별지)은 처벌·의무 질문에 과대 노출 → 감점
         if art_no.startswith("별지") or "서식" in title:
-            score *= 0.25 if q_penalty else 0.55
+            score *= 0.2 if q_penalty else 0.45
+
+        # 의도 키워드가 제목에 있으면 가산
+        if intent_title:
+            for k in (
+                "교육",
+                "과태료",
+                "벌칙",
+                "위험성",
+                "지도사",
+                "물질안전",
+                "검사",
+                "선임",
+                "도급",
+                "중대",
+            ):
+                if k in q and k in title:
+                    score += 6.0
 
         # 도메인 시드 가산
         for law_s, art_s in dom.seed_articles:
