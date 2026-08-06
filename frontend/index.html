@@ -695,6 +695,62 @@
       outline: 2px solid #eab308;
       transition: background 0.2s;
     }
+    /* 별표 질문 관련 과태료 금액 박스 */
+    .msg.bot .fine-box {
+      margin: 0 0 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid #fcd34d;
+      background: linear-gradient(180deg, #fffbeb 0%, #fff 100%);
+    }
+    .msg.bot .fine-box-hd {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #b45309;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .msg.bot .fine-box-hd .fine-unit {
+      font-weight: 500;
+      color: #92400e;
+      font-size: 0.72rem;
+    }
+    .msg.bot .fine-box table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      display: table;
+      overflow: visible;
+      margin: 0;
+    }
+    .msg.bot .fine-box th,
+    .msg.bot .fine-box td {
+      border: 1px solid #fde68a;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .msg.bot .fine-box th {
+      background: #fef3c7;
+      color: #92400e;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .msg.bot .fine-box td.amt {
+      font-weight: 700;
+      color: #9a3412;
+      white-space: nowrap;
+      text-align: right;
+    }
+    .msg.bot .fine-box .fine-basis {
+      margin-top: 6px;
+      font-size: 0.75rem;
+      color: #78716c;
+      line-height: 1.4;
+    }
     .msg.bot .kosha-section {
       margin: 12px 0 6px;
     }
@@ -1729,6 +1785,14 @@
         const mNum = ln.match(/^(\d+)\.$/);
         if (mNum && nxt && (nxt.startsWith(mNum[0]) || nxt.startsWith(mNum[1] + ".")))
           continue;
+        // 고아 가지 호 "2의2." / "1의2." — 다음 줄에 같은 번호 본문
+        const mBranch = ln.match(/^(\d+의\d+)\.$/);
+        if (
+          mBranch &&
+          nxt &&
+          (nxt.startsWith(mBranch[0]) || nxt.startsWith(mBranch[1] + "."))
+        )
+          continue;
         const mMok = ln.match(/^([가-힣])\.$/);
         if (mMok && nxt && nxt.startsWith(mMok[0])) continue;
         out.push(ln);
@@ -2045,6 +2109,141 @@
       return { key: "act", label: "법률", order: 1, cls: "law-tier-act" };
     }
 
+    /**
+     * 별표 본문에서 질문 관련 과태료 행 발췌 → UI 표
+     * (LLM과 별도로 카드에 금액을 바로 보여 신뢰도↑)
+     */
+    function extractByeolFineTable(body, question) {
+      const q = String(question || "");
+      if (!body || !q) return null;
+      const terms = [];
+      const add = (t) => {
+        if (t && !terms.includes(t)) terms.push(t);
+      };
+      if (/msds|물질안전|물질\s*안전/i.test(q)) {
+        add("물질안전");
+        add("물질안전보건");
+      }
+      if (/미부착|미게시|미비치|게시|갖추/.test(q)) {
+        add("게시하지");
+        add("갖추어");
+        add("게시");
+      }
+      if (/미제출|제출/.test(q)) add("제출하지");
+      if (/미제공|제공/.test(q)) add("제공하지");
+      if (/경고|라벨/.test(q)) add("경고표시");
+      if (/안전관리자/.test(q)) add("안전관리자");
+      if (/보건관리자/.test(q)) add("보건관리자");
+      if (/위험성\s*평가/.test(q)) add("위험성평가");
+      if (!terms.length) {
+        const m = q.match(/[가-힣]{2,}/g) || [];
+        m.slice(0, 4).forEach(add);
+      }
+      if (!terms.length) return null;
+
+      let flat = String(body)
+        .replace(/[┌┐└┘├┤┬┴┼─│┃━]+/g, " ")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n{2,}/g, "\n");
+      const i4 = flat.search(/4\.\s*개별기준/);
+      if (i4 >= 0) flat = flat.slice(i4);
+
+      const needMsds = terms.some((t) => t.includes("물질안전"));
+      const needPost = terms.some((t) => /게시|갖추/.test(t));
+
+      let bestPos = -1;
+      let bestScore = -1;
+      for (const term of terms) {
+        let start = 0;
+        for (let n = 0; n < 5; n++) {
+          const i = flat.indexOf(term, start);
+          if (i < 0) break;
+          const w = flat.slice(Math.max(0, i - 100), i + 450);
+          if (needMsds && !w.includes("물질안전")) {
+            start = i + term.length;
+            continue;
+          }
+          if (needPost && !/(게시|갖추)/.test(w)) {
+            start = i + term.length;
+            continue;
+          }
+          let sc = term.length;
+          for (const t of terms) if (w.includes(t)) sc += 2;
+          if (/\d{1,4}\s+\d{1,4}\s+\d{1,4}/.test(w)) sc += 5;
+          if (sc > bestScore) {
+            bestScore = sc;
+            bestPos = i;
+          }
+          start = i + term.length;
+        }
+      }
+      if (bestPos < 0 || bestScore < 3) return null;
+
+      const chunk = flat.slice(Math.max(0, bestPos - 160), bestPos + 520);
+      const rows = [];
+      const reItem =
+        /(\d+)\)\s*([^0-9]{6,140}?)\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})/g;
+      let m;
+      while ((m = reItem.exec(chunk)) !== null && rows.length < 5) {
+        let desc = m[2].replace(/\s+/g, " ").trim();
+        if (!/(게시|갖추|제공|제출|경고|선임|작성|물질)/.test(desc)) {
+          desc = (desc + " " + chunk.slice(m.index + m[0].length, m.index + m[0].length + 50))
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 90);
+        }
+        rows.push({
+          n: m[1],
+          desc: desc.slice(0, 100),
+          a1: m[3],
+          a2: m[4],
+          a3: m[5],
+        });
+      }
+      if (!rows.length) return null;
+
+      // 근거 조문 힌트
+      let basis = "";
+      const bm = chunk.match(/제\s*(\d+)\s*조\s*제?\s*(\d+)\s*항\s*제?\s*(\d+(?:의\d+)?)\s*호/);
+      if (bm) basis = `법 제${bm[1]}조제${bm[2]}항제${bm[3]}호`;
+      else {
+        const bm2 = chunk.match(/제(\d+)조제(\d+)\s*항제(\d+(?:의\d+)?)호/);
+        if (bm2) basis = `법 제${bm2[1]}조제${bm2[2]}항제${bm2[3]}호`;
+      }
+      let duty = "";
+      const dm = chunk.match(/법\s*제\s*(\d+)\s*조(?:제(\d+)항)?/);
+      if (dm && dm[1] !== "175") {
+        duty = `법 제${dm[1]}조` + (dm[2] ? `제${dm[2]}항` : "");
+      }
+
+      return { rows, basis, duty, unit: "만원" };
+    }
+
+    function renderFineBox(fine) {
+      if (!fine || !fine.rows || !fine.rows.length) return "";
+      const head =
+        `<div class="fine-box-hd">과태료 금액 (별표 개별기준)` +
+        `<span class="fine-unit">단위: ${esc(fine.unit || "만원")} · 1·2·3차 위반</span></div>`;
+      let table =
+        `<table><thead><tr><th>세부</th><th>1차</th><th>2차</th><th>3차 이상</th></tr></thead><tbody>`;
+      for (const r of fine.rows) {
+        table +=
+          `<tr><td>${esc(r.n + ") " + r.desc)}</td>` +
+          `<td class="amt">${esc(r.a1)}만</td>` +
+          `<td class="amt">${esc(r.a2)}만</td>` +
+          `<td class="amt">${esc(r.a3)}만</td></tr>`;
+      }
+      table += `</tbody></table>`;
+      let basis = "";
+      if (fine.duty || fine.basis) {
+        const parts = [];
+        if (fine.duty) parts.push("의무 " + fine.duty);
+        if (fine.basis) parts.push("근거 " + fine.basis);
+        basis = `<div class="fine-basis">${esc(parts.join(" · "))} · 규모 감경·가중 가능 · 참고용</div>`;
+      }
+      return `<div class="fine-box">${head}${table}${basis}</div>`;
+    }
+
     /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트 + 위계 스타일) */
     function renderLawCards(articles, question) {
       if (!articles || !articles.length) return "";
@@ -2101,13 +2300,23 @@
           const pdfUrl = (a.pdf_url || "").trim();
           const hwpUrl = (a.hwp_url || "").trim();
           const hasMedia = isByeol && (pdfUrl || hwpUrl || (a.image_url || "").trim());
+          // 과태료 별표: 질문 관련 금액을 카드에 바로 표시 (접힌 상태에서도)
+          const fine =
+            isByeol &&
+            (art.includes("35") || /과태료/.test(title) || /과태료|msds|금액|얼마/i.test(question || ""))
+              ? extractByeolFineTable(body, question || "")
+              : null;
+          const fineHtml = fine ? renderFineBox(fine) : "";
           // 별표 표 HTML 자동 변환은 셀 병합·금액 열 오류가 잦음 → PDF 정본
           let bdInner = "";
           if (hasMedia) {
             const intro = byeolIntroText(body, title);
             bdInner =
+              (fineHtml
+                ? fineHtml
+                : "") +
               `<div class="byeol-open-panel">` +
-              `<p class="byeol-open-hint">별표 표는 HTML로 재구성하면 칸이 어긋날 수 있어, <strong>PDF 원본</strong>을 새 창으로 엽니다.</p>` +
+              `<p class="byeol-open-hint">전체 표·기타 위반은 <strong>PDF 원본</strong>에서 확인하세요.</p>` +
               `<div class="byeol-files">` +
               (pdfUrl
                 ? `<a class="byeol-pdf-main" href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 별표 PDF 새 창</a>`
@@ -2120,9 +2329,28 @@
                 ? `<div class="byeol-prose">${lawTextHtml(intro, keywords)}</div>`
                 : "");
           } else if (isByeol) {
-            bdInner = formatByeolProseOnly(body, title, keywords);
+            bdInner = fineHtml + formatByeolProseOnly(body, title, keywords);
           } else {
             bdInner = lawBodyHtml(body, title, keywords, false);
+          }
+          // 접힌 카드 요약: 금액 표가 있으면 요약 자리에 노출
+          let sumBlock = "";
+          if (fineHtml) {
+            sumBlock = fineHtml;
+          } else if (sum && !hasMedia) {
+            sumBlock =
+              `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`;
+          } else if (hasMedia) {
+            sumBlock =
+              `<div class="law-sum"><span class="law-sum-label">별표</span>${highlightKeywords(title || citeLabel, keywords)} · ▼ 전문 → PDF 새 창</div>`;
+          }
+          // 펼침 본문에 fine 중복 방지: sum에 이미 넣었으면 bd에서는 제외
+          if (fineHtml && sumBlock === fineHtml) {
+            if (hasMedia) {
+              bdInner = bdInner.replace(fineHtml, "");
+            } else if (isByeol) {
+              bdInner = formatByeolProseOnly(body, title, keywords);
+            }
           }
           return (
             `<div class="law-card ${tier.cls}" data-art="${esc(art)}" data-law="${esc(normalizeLawKey(a.law_name || ""))}" data-tier="${esc(tier.key)}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
@@ -2138,11 +2366,7 @@
             `</div>` +
             `<button type="button" class="law-hd-action" aria-expanded="false">▼ 전문</button>` +
             `</div>` +
-            (sum && !hasMedia
-              ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`
-              : hasMedia
-                ? `<div class="law-sum"><span class="law-sum-label">별표</span>${highlightKeywords(title || citeLabel, keywords)} · ▼ 전문 → PDF 새 창</div>`
-                : "") +
+            sumBlock +
             `<div class="law-bd">${bdInner}</div>` +
             `</div>`
           );

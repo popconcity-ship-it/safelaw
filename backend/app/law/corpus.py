@@ -67,6 +67,14 @@ def normalize_law_body(body: str) -> str:
         ):
             i += 1
             continue
+        # 고아 가지 호 "2의2." / "1의2." — 다음 줄이 같은 번호로 본문 시작
+        m_branch = re.fullmatch(r"(\d+의\d+)\.", ln)
+        if m_branch and nxt and (
+            nxt.startswith(m_branch.group(0))
+            or nxt.startswith(m_branch.group(1) + ".")
+        ):
+            i += 1
+            continue
         # 고아 목 "가." "나."
         m2 = re.fullmatch(r"([가-힣])\.", ln)
         if m2 and nxt and nxt.startswith(m2.group(0)):
