@@ -1105,29 +1105,52 @@
       return t;
     }
 
-    /** 산안법/중처법 제N조 · 별표 N 표기를 클릭 가능한 버튼으로 */
+    /** 법령명 정규화 (카드 data-law 매칭용) */
+    function normalizeLawKey(name) {
+      let s = String(name || "").replace(/\s+/g, "");
+      s = s.replace(/·/g, "ㆍ").replace(/「|」/g, "");
+      if (s === "산안법" || s.startsWith("산안법")) {
+        s = s.replace("산안법", "산업안전보건법");
+      }
+      if (s === "중처법" || s.startsWith("중처법")) {
+        s = s.replace("중처법", "중대재해처벌등에관한법률");
+      }
+      if (s.includes("중대재해처벌법") && !s.includes("등에관한")) {
+        s = s.replace("중대재해처벌법", "중대재해처벌등에관한법률");
+      }
+      return s;
+    }
+
+    /**
+     * 답변 본문 인용 → 클릭 시 아래 카드로
+     * 본법·시행령·시행규칙 제N조 + 별표 N
+     */
     function linkifyLawCites(html) {
       let t = html;
+      // 산업안전보건법 시행령 제119조 / [산안법 시행규칙 제37조] 등
       const re =
-        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:의\s*(\d+))?)\]?/g;
-      t = t.replace(re, (m, full, main, sub1, sub2) => {
-        const sub = sub1 || sub2 || "";
+        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙|사업장\s*위험성평가에\s*관한\s*지침)(?:\s*시행령|\s*시행규칙)?\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조)\]?/g;
+      t = t.replace(re, (m, full, main, sub) => {
         const art = sub ? `${main}의${sub}` : String(main);
         const label = full.replace(/^\[/, "").replace(/\]$/, "");
+        // 법령명만 추출 (…제N조 앞)
+        const lawPart = label.replace(/\s*제\s*\d+(?:의\d+)?\s*조\s*$/, "").trim();
+        const lawKey = normalizeLawKey(lawPart);
         return (
-          `<button type="button" class="law-cite" data-art="${esc(art)}" title="조문 전문 보기">` +
+          `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="조문 전문 보기">` +
           `${esc(label)}</button>`
         );
       });
-      // 별표 N · 별표|35 · 별표／35 (카드 data-art="별표N")
+      // [산업안전보건법 시행령 별표 35] · 별표|35
       t = t.replace(
-        /별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?/g,
-        (m, n, sub) => {
+        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)(?:\s*시행령|\s*시행규칙)?\s*)?별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?\]?/g,
+        (m, lawPref, n, sub) => {
           const art = sub ? `별표${n}의${sub}` : `별표${n}`;
-          const label = sub ? `별표 ${n}의${sub}` : `별표 ${n}`;
+          const label = (lawPref || "") + (sub ? `별표 ${n}의${sub}` : `별표 ${n}`);
+          const lawKey = normalizeLawKey((lawPref || "").trim());
           return (
-            `<button type="button" class="law-cite" data-art="${esc(art)}" title="별표 보기">` +
-            `${esc(label)}</button>`
+            `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="별표 보기">` +
+            `${esc(label.trim())}</button>`
           );
         }
       );
@@ -1177,20 +1200,49 @@
     }
 
     /** 같은 답변 말풍선 안의 조문 카드 펼침 + 스크롤 */
-    function openLawCite(art, scopeEl) {
+    function openLawCite(art, scopeEl, lawHint) {
       const root = scopeEl || messagesEl;
       if (!root || !art) return;
       const want = String(art).replace(/\s/g, "");
-      const cards = root.querySelectorAll(".law-card[data-art]");
+      const wantLaw = normalizeLawKey(lawHint || "");
+      const cards = Array.from(root.querySelectorAll(".law-card[data-art]"));
       let card = null;
+      let fallback = null;
       for (const c of cards) {
         const a = (c.getAttribute("data-art") || "").replace(/\s/g, "");
-        if (a === want || a.startsWith(want + "의") || want.startsWith(a)) {
+        const artOk =
+          a === want || a.startsWith(want + "의") || want.startsWith(a);
+        if (!artOk) continue;
+        const law = normalizeLawKey(c.getAttribute("data-law") || "");
+        if (wantLaw && law) {
+          // 시행령 제119조 ↔ 산업안전보건법시행령
+          if (
+            law === wantLaw ||
+            law.includes(wantLaw) ||
+            wantLaw.includes(law) ||
+            (wantLaw.includes("시행령") && law.includes("시행령")) ||
+            (wantLaw.includes("시행규칙") && law.includes("시행규칙"))
+          ) {
+            card = c;
+            break;
+          }
+          if (!fallback) fallback = c;
+        } else {
           card = c;
           break;
         }
       }
-      if (!card && cards.length) card = cards[0];
+      if (!card) card = fallback;
+      if (!card && cards.length) {
+        // 조 번호만 맞는 첫 카드
+        for (const c of cards) {
+          const a = (c.getAttribute("data-art") || "").replace(/\s/g, "");
+          if (a === want || a.startsWith(want + "의") || want.startsWith(a)) {
+            card = c;
+            break;
+          }
+        }
+      }
       if (!card) return;
       setLawCardOpen(card, true);
       card.classList.add("flash");
@@ -1700,7 +1752,7 @@
             bdInner = formatByeolProseOnly(body, title, keywords);
           }
           return (
-            `<div class="law-card" data-art="${esc(art)}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
+            `<div class="law-card" data-art="${esc(art)}" data-law="${esc(normalizeLawKey(a.law_name || ""))}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
             `<div class="law-top">` +
             `<div class="law-top-text">` +
             `<div class="law-hd-title">[${highlightKeywords(citeLabel, keywords)}]</div>` +
@@ -2380,7 +2432,11 @@
       const btn = e.target.closest(".law-cite");
       if (!btn || !messagesEl.contains(btn)) return;
       e.preventDefault();
-      openLawCite(btn.getAttribute("data-art"), btn.closest(".msg.bot") || messagesEl);
+      openLawCite(
+        btn.getAttribute("data-art"),
+        btn.closest(".msg.bot") || messagesEl,
+        btn.getAttribute("data-law") || ""
+      );
     });
 
     sendBtn.addEventListener("click", () => send());
