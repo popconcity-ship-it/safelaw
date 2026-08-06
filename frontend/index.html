@@ -1017,18 +1017,43 @@
           `${esc(label)}</button>`
         );
       });
-      // 별표 N (카드 data-art="별표N")
+      // 별표 N · 별표|35 · 별표／35 (카드 data-art="별표N")
       t = t.replace(
-        /별표\s*(\d+)(?:\s*의\s*(\d+))?/g,
+        /별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?/g,
         (m, n, sub) => {
           const art = sub ? `별표${n}의${sub}` : `별표${n}`;
+          const label = sub ? `별표 ${n}의${sub}` : `별표 ${n}`;
           return (
             `<button type="button" class="law-cite" data-art="${esc(art)}" title="별표 보기">` +
-            `${esc(m)}</button>`
+            `${esc(label)}</button>`
           );
         }
       );
       return t;
+    }
+
+    /** 조문/별표 카드 본문용: 키워드 형광 + 별표 클릭 링크 */
+    function lawTextHtml(plain, keywords) {
+      let t = String(plain || "");
+      // 별표|35 → 별표 35
+      t = t.replace(/별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?/g, (_, n, sub) =>
+        sub ? `별표 ${n}의${sub}` : `별표 ${n}`
+      );
+      const re = /(별표\s*\d+(?:\s*의\s*\d+)?)/g;
+      const parts = t.split(re);
+      return parts
+        .map((p) => {
+          const m = p.match(/^별표\s*(\d+)(?:\s*의\s*(\d+))?$/);
+          if (m) {
+            const art = m[2] ? `별표${m[1]}의${m[2]}` : `별표${m[1]}`;
+            return (
+              `<button type="button" class="law-cite" data-art="${esc(art)}" title="별표 보기">` +
+              `${highlightKeywords(p, keywords)}</button>`
+            );
+          }
+          return highlightKeywords(p, keywords);
+        })
+        .join("");
     }
 
     function setLawCardOpen(card, open) {
@@ -1171,10 +1196,14 @@
      * 법제처 XML 잔여 정리
      *  ① / 개정 / 2026.2.19 / ① 본문… → ① 본문…
      *  1. / 1. 항목 → 1. 항목
+     *  별표|35 → 별표 35
      */
     function normalizeLawBody(body) {
       let t = String(body || "").replace(/\r/g, "").trim();
       if (!t) return "";
+      t = t.replace(/별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?/g, (_, n, sub) =>
+        sub ? `별표 ${n}의${sub}` : `별표 ${n}`
+      );
       const hangOnly = new Set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮".split(""));
       const metaWords = new Set(["개정", "신설", "삭제", "전문개정", "일부개정"]);
       const dateRe = /^\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?$/;
@@ -1278,10 +1307,7 @@
         return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       }
       return parts
-        .map(
-          (line) =>
-            `<div class="hang">${highlightKeywords(line, keywords)}</div>`
-        )
+        .map((line) => `<div class="hang">${lawTextHtml(line, keywords)}</div>`)
         .join("");
     }
 
@@ -1341,7 +1367,7 @@
             `<button type="button" class="law-hd-action" aria-expanded="false">▼ 전문</button>` +
             `</div>` +
             (sum
-              ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${highlightKeywords(sum, keywords)}</div>`
+              ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`
               : "") +
             `<div class="law-bd">${lawBodyHtml(body, title, keywords)}</div>` +
             `</div>`

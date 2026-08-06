@@ -166,9 +166,10 @@ class Orchestrator:
                 kosha_block=short_kosha,
             )
 
-        # 답변에 인용된 조문이 카드에 없으면 코퍼스에서 보강 (클릭·전문 정합)
+        # 답변·조문 본문에 인용된 조/별표가 카드에 없으면 코퍼스 보강
         if not document_payload:
             articles = self._enrich_articles_from_answer(answer, articles)
+            articles = self._enrich_byeol_from_articles(articles)
 
         # 인용 재조회(법제처)는 느림 → 이미 확보한 조문으로 가벼운 검증만
         citations = self._citations_from_articles(answer, articles)
@@ -226,7 +227,7 @@ class Orchestrator:
 
         네트워크(법제처) 없이 로컬 코퍼스만. 최대 6건.
         """
-        from ..law.corpus import get_corpus_article
+        from ..law.corpus import get_corpus_article, normalize_article_key
 
         extracted = extract_citations(answer or "")
         if not extracted:
@@ -234,7 +235,8 @@ class Orchestrator:
 
         out = list(articles)
         seen: set[tuple[str, str]] = {
-            (self._norm_law(a.law_name), str(a.article_no)) for a in out
+            (self._norm_law(a.law_name), normalize_article_key(str(a.article_no)))
+            for a in out
         }
 
         # 인용 순서로 앞에 붙일 보강분
@@ -247,11 +249,22 @@ class Orchestrator:
                 continue
             if self._article_match(law, art, out):
                 continue
-            key = (self._norm_law(law), art)
-            if key in seen:
+            art_k = normalize_article_key(art)
+            key = (self._norm_law(law), art_k)
+            if key in seen or any(normalize_article_key(str(a.article_no)) == art_k for a in out):
                 continue
 
             hit = get_corpus_article(law, art)
+            if not hit and art_k.startswith("별표"):
+                for trial in (
+                    "산업안전보건법 시행령",
+                    "산업안전보건법 시행규칙",
+                    "중대재해 처벌 등에 관한 법률 시행령",
+                    "산업안전보건법",
+                ):
+                    hit = get_corpus_article(trial, art)
+                    if hit:
+                        break
             if not hit and ("산안법" in law or "산업안전" in law or not law):
                 hit = get_corpus_article("산업안전보건법", art)
             if not hit:
@@ -265,7 +278,7 @@ class Orchestrator:
                 mst=hit.get("mst"),
                 source="corpus",
             )
-            seen.add((self._norm_law(a.law_name), str(a.article_no)))
+            seen.add((self._norm_law(a.law_name), normalize_article_key(a.article_no)))
             enriched_front.append(a)
             out.append(a)
             if len(out) >= 8:
@@ -279,13 +292,57 @@ class Orchestrator:
         # 인용 순서 우선 + 기존 검색 조문
         ordered: list[Article] = []
         for a in enriched_front + rest:
-            k = (self._norm_law(a.law_name), str(a.article_no))
+            k = (self._norm_law(a.law_name), normalize_article_key(str(a.article_no)))
             if any(
-                (self._norm_law(x.law_name), str(x.article_no)) == k for x in ordered
+                (self._norm_law(x.law_name), normalize_article_key(str(x.article_no)))
+                == k
+                for x in ordered
             ):
                 continue
             ordered.append(a)
         return ordered[:6]
+
+    def _enrich_byeol_from_articles(self, articles: list[Article]) -> list[Article]:
+        """조문 본문의 「별표 N」 언급 → 별표 카드 자동 추가."""
+        from ..law.corpus import get_corpus_article, normalize_article_key
+
+        out = list(articles)
+        seen = {normalize_article_key(str(a.article_no)) for a in out}
+        # 별표|35 · 별표 35 · 별표35
+        pat = re.compile(r"별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?")
+
+        for a in list(articles):
+            blob = f"{a.title or ''}\n{a.body or ''}"
+            for m in pat.finditer(blob):
+                art = f"별표{m.group(1)}" + (f"의{m.group(2)}" if m.group(2) else "")
+                if art in seen:
+                    continue
+                hit = get_corpus_article(a.law_name, art)
+                if not hit:
+                    for trial in (
+                        "산업안전보건법 시행령",
+                        "산업안전보건법 시행규칙",
+                        "중대재해 처벌 등에 관한 법률 시행령",
+                    ):
+                        hit = get_corpus_article(trial, art)
+                        if hit:
+                            break
+                if not hit:
+                    continue
+                seen.add(art)
+                out.append(
+                    Article(
+                        law_name=hit["law_name"],
+                        article_no=str(hit["article_no"]),
+                        title=hit.get("title") or "",
+                        body=hit.get("body") or "",
+                        mst=hit.get("mst"),
+                        source="corpus",
+                    )
+                )
+                if len(out) >= 8:
+                    return out
+        return out
 
     def _citations_from_articles(
         self, answer: str, articles: list[Article]

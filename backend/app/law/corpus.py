@@ -30,6 +30,10 @@ def normalize_law_body(body: str) -> str:
     if not body:
         return ""
     t = str(body).replace("\r\n", "\n").replace("\r", "\n")
+    # 별표|35 · 별표／35 → 별표 35 (링크·검색용)
+    t = re.sub(r"별표\s*[|·ㆍ／/]\s*(\d+)", r"별표 \1", t)
+    t = re.sub(r"별표(\d+)", r"별표 \1", t)
+    t = re.sub(r"별표\s+(\d+)", r"별표 \1", t)
     lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
     hang_only = set("①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮")
     meta_words = {"개정", "신설", "삭제", "전문개정", "일부개정"}
