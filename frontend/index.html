@@ -2824,11 +2824,21 @@
             (isByeol || isNotice) &&
             (pdfUrl || hwpUrl || (a.image_url || "").trim());
           // 과태료 별표: 질문 관련 금액을 카드에 바로 표시 (접힌 상태에서도)
-          const fine =
+          // 과태료 금액 표: 산안법 별표35 + MSDS/과태료 질문일 때만
+          // 보일러·열사용 검사 처벌 질문에는 띄우지 않음 (에너지법 벌칙과 혼동)
+          const q = question || "";
+          const qBoiler =
+            /보일러|열사용|검사대상기기|열매유|압력용기/.test(q) &&
+            !/물질안전|msds|미부착|미게시/i.test(q);
+          const wantFine =
             isByeol &&
-            (art.includes("35") || /과태료/.test(title) || /과태료|msds|금액|얼마/i.test(question || ""))
-              ? extractByeolFineTable(body, question || "", art)
-              : null;
+            !qBoiler &&
+            (art.includes("35") ||
+              (/과태료/.test(title) && /산업안전보건법 시행령/.test(a.law_name || "")) ||
+              /과태료|msds|미부착|금액|얼마/i.test(q));
+          const fine = wantFine
+            ? extractByeolFineTable(body, q, art)
+            : null;
           const fineHtml = fine ? renderFineBox(fine, pdfUrl) : "";
           // 별표 표 HTML 자동 변환은 셀 병합·금액 열 오류가 잦음 → PDF 정본
           let bdInner = "";

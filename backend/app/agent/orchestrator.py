@@ -84,9 +84,17 @@ class Orchestrator:
             for k in ("KOSHA", "kosha", "가이드", "안전보건공단", "기술지침")
         ):
             want_pdf = True
-        kosha_limit = 3 if want_pdf else 2
+        # 처벌·벌칙·과태료 질문: 법 조문이 본선 — KOSHA 노이즈 최소화
+        legal_focus = any(
+            k in message for k in ("처벌", "벌칙", "과태료", "얼마", "부과")
+        ) and not any(
+            k in message for k in ("KOSHA", "kosha", "가이드", "기술지침")
+        )
+        kosha_limit = 0 if legal_focus else (3 if want_pdf else 2)
 
         async def _kosha() -> list:
+            if kosha_limit <= 0:
+                return []
             return await asyncio.to_thread(
                 search_kosha,
                 message,
@@ -95,7 +103,7 @@ class Orchestrator:
             )
 
         articles, kosha_hits = await asyncio.gather(
-            self.law.get_articles_for_query(message, limit=4),
+            self.law.get_articles_for_query(message, limit=5),
             _kosha(),
         )
         from ..kosha.pdf_pipeline import local_pdf_url

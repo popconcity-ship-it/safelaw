@@ -16,7 +16,12 @@ from cachetools import TTLCache
 
 from ..config import Settings, get_settings
 from ..models.schemas import Article, LawSearchHit
-from .corpus import article_from_row, get_corpus_article, search_corpus
+from .corpus import (
+    article_from_row,
+    get_corpus_article,
+    normalize_article_key,
+    search_corpus,
+)
 from .safety_laws import (
     demo_get_article,
     demo_search,
@@ -347,32 +352,41 @@ class LawClient:
                     law_name = hits[0].law_name if hits else "산업안전보건법"
                 _append(await self.get_article(law_name, art))
 
-        if articles:
-            return articles[:limit]
-
-        # 2) 로컬 코퍼스 전문검색 — 본문 그대로 사용 (법제처 재조회는 느림 → 생략)
-        corpus_hits = search_corpus(expanded, limit=max(limit, 6))
-        for hit in corpus_hits:
-            _append(article_from_row(hit))
-            if len(articles) >= limit:
-                break
-
-        if articles:
-            return articles[:limit]
-
-        # 3) 코퍼스 미구축·무매칭 시 주제 맵 → 코퍼스/데모만 (네트워크 최소화)
-        for law, art in match_topic_articles(expanded):
-            # 캐시에 있으면 사용, 없으면 데모/단건 (단건은 최후)
-            cached = None
-            for hit in search_corpus(f"{law} 제{art}조", limit=3):
-                if str(hit.get("article_no")) == str(art) or law in (hit.get("law_name") or ""):
-                    if str(hit.get("article_no")) == str(art) or art in str(hit.get("article_no")):
+        # 2) 주제 맵 우선 주입 (보일러→에너지법 제39·73 등)
+        #    예전: 코퍼스 히트가 있으면 토픽을 건너뛰어 엉뚱한 산안법 조가 먼저 붙음
+        topic_pairs = match_topic_articles(expanded)
+        for law, art in topic_pairs:
+            cached = get_corpus_article(law, art)
+            if not cached:
+                # 고시 편·개요 키
+                for hit in search_corpus(f"{law} {art}", limit=4):
+                    ha = str(hit.get("article_no") or "")
+                    if ha == str(art) or normalize_article_key(ha) == normalize_article_key(
+                        str(art)
+                    ):
                         cached = hit
                         break
             if cached:
                 _append(article_from_row(cached))
-            else:
-                _append(await self.get_article(law, art))
+            if len(articles) >= limit:
+                return articles[:limit]
+
+        # 3) 로컬 코퍼스 전문검색으로 보강
+        #    보일러 처벌 등 토픽이 이미 채워졌으면 산안법·엉뚱한 별표로 덮지 않음
+        if len(articles) >= limit:
+            return articles[:limit]
+        corpus_hits = search_corpus(expanded, limit=max(limit * 2, 8))
+        boiler_focus = any(
+            "에너지이용" in (a.law_name or "") or "열사용기자재" in (a.law_name or "")
+            for a in articles
+        ) or any("에너지이용" in p[0] or "열사용" in p[0] for p in topic_pairs)
+        for hit in corpus_hits:
+            if boiler_focus:
+                ln = hit.get("law_name") or ""
+                # 보일러 맥락: 산안법·MSDS 과태료 별표 유입 차단
+                if "산업안전보건" in ln and "에너지" not in ln:
+                    continue
+            _append(article_from_row(hit))
             if len(articles) >= limit:
                 break
 

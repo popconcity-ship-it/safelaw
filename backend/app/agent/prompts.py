@@ -20,6 +20,15 @@ SYSTEM_PROMPT = """당신은 산업안전·중대재해 분야 법규 도우미 
    - 3차 금액만 단독으로 "500만원입니다"라고 단정하지 마세요 (질문이 1회 위반일 수 있음)
    - 규모 감경·가중이 근거에 있으면 짧게 덧붙이세요
    - 근거에 행이 없을 때만 "개별기준 행을 찾지 못했다"고 하세요
+4-1. 벌칙 ≠ 과태료 (중요):
+   - 근거에 「징역」「벌금에 처한다」 등 형사 벌칙이 있으면 그 문구를 그대로 답하세요
+   - 벌칙 조문이 본선인 질문에 1·2·3차 과태료 금액을 붙이거나 지어내지 마세요
+   - 별표 과태료 표는 「과태료」 질문·해당 개별기준 행이 근거에 있을 때만 사용
+4-2. 도메인 혼동 금지 (중요):
+   - 보일러·열사용기자재·검사대상기기 검사 미이행 → 「에너지이용 합리화법」 제39조(검사의무)·제73조(벌칙)
+   - 제73조 정본: 1년 이하의 징역 또는 1천만원 이하의 벌금 (검사 미수검자 등)
+   - 산안법 제114조·별표35 물질안전보건자료(MSDS) 과태료와 절대 섞지 마세요
+   - 에너지법 시행령 별표5의 다른 위반(교육·신고 등) 과태료를 검사 미수검 처벌로 답하지 마세요
 5. 근거 조문 블록에 해당 조가 있으면 "확인할 수 없습니다"라고 하지 마세요.
 6. 실무 조언은 "참고"로 구분하세요.
 7. [KOSHA 가이드]는 실무 참고이며 법 조항처럼 인용하지 마세요. 긴 KOSHA 발췌 금지.
@@ -27,7 +36,8 @@ SYSTEM_PROMPT = """당신은 산업안전·중대재해 분야 법규 도우미 
 9. 말미 한 줄 면책: 참고용이며 최종 판단은 전문가/관할 기관 확인이 필요하다고 적으세요.
 
 ## 답변 형식
-- 금액 질문: 첫 문장에 1·2·3차 금액 → 이어서 의무 조문·과태료 근거 조문 링크 형식 인용
+- 과태료 금액 질문: 첫 문장에 1·2·3차 금액 → 이어서 의무·과태료 조문 인용
+- 벌칙(징역·벌금) 질문: 첫 문장에 형량·벌금 상한 → 의무 조문·벌칙 조문 인용 (1·2·3차 과태료 형식 금지)
 - 조문 인용은 문장 안 실제 조번호만 (자리표시자 금지)
 - KOSHA 장황 나열 금지
 """
@@ -377,6 +387,28 @@ def _byeol_general_head(body: str, max_len: int = 500) -> str:
     return t
 
 
+def _is_boiler_penalty_query(question: str) -> bool:
+    """보일러·열사용 검사 미이행 처벌 질문 (과태료 표 오인 방지)."""
+    q = question or ""
+    if not any(
+        k in q
+        for k in (
+            "보일러",
+            "열사용",
+            "검사대상기기",
+            "열매유",
+            "압력용기",
+        )
+    ):
+        return False
+    if any(k in q.lower() for k in ("물질안전", "msds", "미부착", "미게시")):
+        return False
+    # 명시 과태료 질문이 아니면 벌칙(검사 미수검) 쪽으로 본다
+    if "과태료" in q and not any(k in q for k in ("처벌", "벌칙", "안받", "미검사")):
+        return False
+    return any(k in q for k in ("처벌", "벌칙", "안받", "미검사", "미수검", "검사 안", "받지"))
+
+
 def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str:
     """별표 → 일반기준 요약 + (질문 관련 시) 개별 금액 행.
 
@@ -387,6 +419,17 @@ def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str
         return "(본문 없음 — UI 별표 PDF 확인)"
 
     head = _byeol_general_head(t, max_len=min(max_len, 480))
+    # 보일러 검사 처벌 질문: 별표 과태료 행 발췌 금지 (교육·신고 행이 '검사'에 오매칭)
+    if question and _is_boiler_penalty_query(question):
+        if not head:
+            head = _clean_excerpt(t, max_len)
+        return (
+            head
+            + "\n\n(※ 이 질문은 검사 미수검 **벌칙**(징역·벌금) 취지입니다. "
+            "별표 과태료 1·2·3차 금액을 검사 미수검 처벌로 인용하지 마세요. "
+            "에너지이용 합리화법 제39조·제73조를 우선하세요.)"
+        )
+
     rows = _extract_relevant_byeol_rows(t, question, max_chars=1100) if question else ""
 
     if rows:
@@ -471,12 +514,21 @@ def _clean_excerpt(text: str, max_len: int = 320) -> str:
 
 
 def _law_excerpt(body: str, max_hang: int = 2) -> str:
-    """조문 본문 — ① 항을 끝까지, 가능하면 ②까지. 문장 중간 절단 금지."""
+    """조문 본문 — ① 항을 끝까지, 가능하면 ②까지. 문장 중간 절단 금지.
+
+    ⛔ 제N조(제목) 라벨만 벗기고, 같은 줄의 본문(벌칙 문구 등)은 반드시 유지.
+    예전: `제73조(벌칙) 1년 이하…` 한 줄을 통째로 지워 벌칙 본문이 사라짐.
+    """
     body = (body or "").strip()
     if not body:
         return ""
-    # 조문 제목 줄 제거 여지
-    body = re.sub(r"^제\d+조[^\n]*\n?", "", body).strip() or body
+    # 라벨만 제거: 제73조(벌칙) / 제39조의2(…) — 뒤 본문은 유지
+    body = re.sub(
+        r"^제\s*\d+(?:의\d+)?\s*조(?:\s*\([^)]*\))?\s*",
+        "",
+        body,
+        count=1,
+    ).strip() or body
 
     # ①②③… 로 항 분리
     parts = re.split(r"(?=①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩)", body)
@@ -486,6 +538,11 @@ def _law_excerpt(body: str, max_hang: int = 2) -> str:
 
     selected = parts[:max_hang]
     text = "\n".join(selected)
+    # 벌칙·과태료 조: 호 목록(1. 2. 3.)까지 포함 — 항 기호가 없어도 본문 유지
+    if re.search(r"징역|벌금|과태료|처한다", text) and len(body) > len(text):
+        # 호 번호 본문이 잘렸으면 전체(한도 내) 사용
+        if re.search(r"(?m)^\d+\.", body) and not re.search(r"(?m)^\d+\.", text):
+            text = body if len(body) <= 1200 else _clean_excerpt(body, 1200)
     # 그래도 너무 길면 마지막 항만 문장 단위 축소
     if len(text) > 900:
         text = _clean_excerpt(text, 900)
@@ -576,6 +633,35 @@ def demo_answer(question: str, articles: list, kosha_hits: list | None = None) -
         bullets = [
             "경영책임자등은 안전보건관리체계 구축·이행 등 의무 ([중처법 제4조])",
         ]
+    elif _is_boiler_penalty_query(question) or (
+        any(k in question for k in ("보일러", "검사대상기기", "열사용"))
+        and any(k in question for k in ("처벌", "벌칙", "안받", "미검사"))
+    ):
+        # 에너지법 제39·73 — 산안법/별표 과태료와 혼동 금지
+        has_73 = any(
+            "73" in str(getattr(a, "article_no", ""))
+            and "에너지" in (getattr(a, "law_name", "") or "")
+            for a in articles
+        )
+        has_39 = any(
+            str(getattr(a, "article_no", "")) in ("39", "39의2")
+            and "에너지" in (getattr(a, "law_name", "") or "")
+            for a in articles
+        )
+        if has_73 or has_39:
+            bullets = [
+                "**검사대상기기(보일러 등) 검사를 받지 않으면** "
+                "[에너지이용 합리화법 제73조]에 따라 "
+                "**1년 이하의 징역 또는 1천만원 이하의 벌금**에 처할 수 있습니다.",
+                "검사 의무: [에너지이용 합리화법 제39조] "
+                "(제조·설치·장소변경·재사용·계속사용 등 검사대상기기 검사).",
+                "※ 산안법 MSDS 과태료(1·2·3차 100/200/500만)와는 **다른 법률**입니다.",
+            ]
+        else:
+            bullets = [
+                "보일러·열사용기자재 검사는 **에너지이용 합리화법** 검사대상기기 규정 확인",
+                "미수검 시 벌칙 조문(제73조 등)을 카드에서 확인하세요",
+            ]
     elif any(
         k in question
         for k in ("산업안전지도사", "산업보건지도사", "지도사")

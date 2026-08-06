@@ -375,6 +375,33 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
         for t in ranked_toks[:3]:
             cand.update(inv.get(t, [])[:200])
 
+    # 도메인 힌트: 보일러·열사용 검사 vs 산안법 MSDS 과태료 혼동 방지
+    q_boiler = any(
+        k in q
+        for k in (
+            "보일러",
+            "열사용",
+            "검사대상기기",
+            "열매유",
+            "압력용기",
+            "용접검사",
+            "구조검사",
+        )
+    )
+    q_msds = any(k in q.lower() for k in ("물질안전", "msds", "게시", "미부착", "미비치"))
+    q_penalty = any(k in q for k in ("처벌", "벌칙", "과태료", "처분", "안받"))
+
+    # 벌칙 조(제73) 본문에 '보일러'·'처벌' 토큰이 없어 후보에서 빠짐 → 강제 편입
+    if q_boiler and not q_msds:
+        force_keys = {"39", "39의2", "73", "75", "40"}
+        for d in docs:
+            if "에너지이용" not in d["law"]:
+                continue
+            if d["art_key"] in force_keys or (
+                q_penalty and d["art_key"] in ("73", "39")
+            ):
+                cand.add(d["i"])
+
     hits: list[dict] = []
     for di in cand:
         d = docs[di]
@@ -402,6 +429,28 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
 
         if "별표" in q and not art_no.startswith("별표") and not art_no.startswith("별지"):
             score *= 0.35
+
+        # 서식(별지)은 처벌·의무 질문에 과대 노출 → 감점
+        if art_no.startswith("별지") or "서식" in title:
+            score *= 0.25 if q_penalty else 0.55
+
+        if q_boiler and not q_msds:
+            if "에너지이용" in law or "열사용기자재" in law:
+                score *= 2.2
+                # 검사 의무·벌칙 조 가산
+                if d["art_key"] in ("39", "39의2", "73", "75", "40", "개요", "7편"):
+                    score += 12.0
+            # 산안법 물질안전·과태료 별표는 보일러 검사 질문에서 감점
+            if "물질안전" in title or "물질안전" in body[:120]:
+                score *= 0.12
+            if "산업안전보건" in law and (
+                d["art_key"] in ("114", "175") or "별표35" in d["art_key"]
+            ):
+                score *= 0.15
+            if q_penalty and d["art_key"] == "73":
+                score += 20.0
+            if q_penalty and d["art_key"] == "39":
+                score += 15.0
 
         if score <= 0:
             continue
