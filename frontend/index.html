@@ -622,8 +622,8 @@
       display: inline !important;
       width: auto !important;
       max-width: none !important;
-      margin: 0 1px !important;
-      padding: 0 1px !important;
+      margin: 0 !important;
+      padding: 0 !important;
       border: none !important;
       border-radius: 0 !important;
       border-bottom: 1.5px solid #60a5fa !important;
@@ -635,6 +635,7 @@
       font-size: inherit !important;
       line-height: inherit !important;
       white-space: normal !important;
+      word-break: keep-all !important;
       vertical-align: baseline !important;
       cursor: pointer;
       appearance: none;
@@ -1167,40 +1168,102 @@
         .replace(/>/g, "&gt;");
     }
 
+    /** 인용 토큰 (법령명 + 조/별표) — 줄·꼬리 중복 제거용 */
+    const CITE_CORE =
+      "(?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\\s*처벌\\s*등에\\s*관한\\s*법률|산업안전보건기준에\\s*관한\\s*규칙)" +
+      "(?:\\s*시행령|\\s*시행규칙)?\\s*" +
+      "(?:제\\s*\\d+(?:의\\d+)?\\s*조|별표\\s*\\d+(?:의\\d+)?)";
+    const CITE_TOKEN_RE = new RegExp(
+      "[\\[【]?(" + CITE_CORE + ")[\\]】]?",
+      "g"
+    );
+    // 마침표는 남기고 뒤의 출처 덤프만 제거
+    const CITE_TRAIL_RE = new RegExp(
+      "\\s*[\\[【]?(" + CITE_CORE + ")[\\]】]?\\s*$"
+    );
+    const CITE_LINE_RE = new RegExp(
+      "^[\\s\\[【]*(" + CITE_CORE + "|별표\\s*\\d+(?:의\\d+)?)[\\s\\]】.。]*$"
+    );
+
+    function citeKey(s) {
+      return String(s || "")
+        .replace(/[\[\]【】]/g, "")
+        .replace(/\s+/g, "")
+        .replace(/산안법/g, "산업안전보건법")
+        .replace(/중처법|중대재해처벌법/g, "중대재해처벌등에관한법률")
+        .replace(/중대재해처벌등에관한법률/g, "중대재해처벌등에관한법률");
+    }
+
     /**
-     * 답변 전처리: 단독 인용 줄 제거 (문장 안 링크와 중복 칩 방지)
-     * 예) 본문에 제175조가 있는데 다음 줄에 또 [산업안전보건법 제175조]만 있는 경우
+     * 답변 전처리: 단독 인용 줄·문장 끝 꼬리 인용 제거
+     * (문장 안 링크와 중복되는 칩/줄 방지)
      */
     function stripStandaloneCiteLines(text) {
-      const citeOnly =
-        /^[\s\[【]*(?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙)(?:\s*시행령|\s*시행규칙)?\s*(?:제\s*\d+(?:의\d+)?\s*조|별표\s*\d+(?:의\d+)?)[\s\]】.。]*$/;
-      const byeolOnly = /^[\s\[【]*(?:[^\n]{0,40})?별표\s*\d+(?:의\d+)?[\s\]】.。]*$/;
       const lines = String(text || "").split("\n");
       const kept = [];
+      const seen = new Set();
+
       for (const line of lines) {
-        const t = line.trim();
-        if (!t) {
-          // 빈 줄은 문단 구분용으로 최대 1개 유지
+        let t = line.replace(/\s+$/, "").trimEnd();
+        const trimmed = t.trim();
+        if (!trimmed) {
           if (kept.length && kept[kept.length - 1] !== "") kept.push("");
           continue;
         }
-        if (citeOnly.test(t) || byeolOnly.test(t)) {
-          // 직전 문단에 같은 인용 키가 있으면 스킵
-          const key = t.replace(/[\[\]【】\s.]/g, "");
-          const prev = kept.join("").replace(/\s/g, "");
-          if (prev.includes(key) || key.length < 4) continue;
-          // 단독 인용 줄은 가독성 위해 제거 (본문 인라인 링크만 남김)
+        // 줄 전체가 인용뿐이면 제거
+        if (CITE_LINE_RE.test(trimmed)) {
+          const k = citeKey(trimmed);
+          if (k) seen.add(k);
           continue;
         }
-        kept.push(line.replace(/\s+$/, ""));
+
+        // 문장 끝에 붙은 꼬리 인용 반복 제거
+        // 예) "...결정된다. 산업안전보건법 시행령 제119조"
+        let guard = 0;
+        while (guard++ < 8) {
+          const m = t.match(CITE_TRAIL_RE);
+          if (!m) break;
+          const body = t.slice(0, t.length - m[0].length);
+          const k = citeKey(m[1]);
+          const bodyKey = citeKey(body);
+          const already =
+            (k && (bodyKey.includes(k) || seen.has(k))) ||
+            /[.。]\s*$/.test(body.trim());
+          // 본문에 이미 있거나, 마침표 뒤 출처 덤프면 제거
+          if (already && body.trim().length >= 8) {
+            if (k) seen.add(k);
+            t = body.replace(/\s+$/, "");
+            continue;
+          }
+          break;
+        }
+
+        // 본문에 등장한 인용 키 기록 (이후 꼬리/단독 줄 제거용)
+        CITE_TOKEN_RE.lastIndex = 0;
+        let cm;
+        while ((cm = CITE_TOKEN_RE.exec(t)) !== null) {
+          const k = citeKey(cm[1]);
+          if (k) seen.add(k);
+        }
+        kept.push(t);
       }
-      // 끝 빈 줄 정리
       while (kept.length && kept[kept.length - 1] === "") kept.pop();
       return kept.join("\n");
     }
 
+    /** 화면용 짧은 법령 라벨 (긴 정식명 줄바꿈·가독성) */
+    function shortCiteLabel(label) {
+      return String(label || "")
+        .replace(/중대재해\s*처벌\s*등에\s*관한\s*법률/g, "중처법")
+        .replace(/중대재해처벌법/g, "중처법")
+        .replace(/산업안전보건법/g, "산안법")
+        .replace(/산업안전보건기준에\s*관한\s*규칙/g, "안전보건규칙")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
     function lightMd(text) {
-      // 중복 단독 인용 줄 제거 → 문단 흐름 유지
+      // 중복 단독 인용 줄·꼬리 제거 → 문단 흐름 유지
       let raw = stripStandaloneCiteLines(text);
       let t = esc(raw);
       t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
@@ -1287,9 +1350,10 @@
         // 법령명만 추출 (…제N조 앞)
         const lawPart = label.replace(/\s*제\s*\d+(?:의\d+)?\s*조\s*$/, "").trim();
         const lawKey = normalizeLawKey(lawPart);
+        const shown = shortCiteLabel(label);
         return (
-          `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="조문 전문 보기">` +
-          `${esc(label)}</button>`
+          `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label)} · 조문 전문">` +
+          `${esc(shown)}</button>`
         );
       });
       // [산업안전보건법 시행령 별표 35] · 별표|35
@@ -1299,9 +1363,10 @@
           const art = sub ? `별표${n}의${sub}` : `별표${n}`;
           const label = (lawPref || "") + (sub ? `별표 ${n}의${sub}` : `별표 ${n}`);
           const lawKey = normalizeLawKey((lawPref || "").trim());
+          const shown = shortCiteLabel(label.trim());
           return (
-            `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="별표 보기">` +
-            `${esc(label.trim())}</button>`
+            `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label.trim())} · 별표 보기">` +
+            `${esc(shown)}</button>`
           );
         }
       );
