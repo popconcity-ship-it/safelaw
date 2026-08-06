@@ -54,3 +54,4 @@ data/kosha/*.bin
 
 # 임시 다운로드 리포트 (선택 추적 시 주석 해제하지 말 것)
 # data/kosha/download_report.json
+tmp_siyan/
