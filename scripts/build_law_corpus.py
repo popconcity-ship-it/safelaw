@@ -306,13 +306,43 @@ async def build(laws: list[str] | None = None) -> Path:
         by[r["law_name"]] = by.get(r["law_name"], 0) + 1
     for k, v in by.items():
         print(f"  {k}: {v}")
+
+    # 별표 PDF 페이지 인덱스도 같이 갱신 (개정 flSeq 반영)
+    import os
+    import subprocess
+
+    if os.environ.get("SAFE_LAW_SKIP_PAGE_INDEX") == "1":
+        print("\n(skip page index)")
+        return OUT
+
+    script = ROOT / "scripts" / "build_byeol_page_index.py"
+    print(f"\n… 별표 PDF 페이지 인덱스 갱신 ({script.name})")
+    r = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(ROOT),
+        check=False,
+    )
+    if r.returncode != 0:
+        print(f"  ! page index 실패 (코퍼스는 저장됨): code={r.returncode}")
+    else:
+        print("  page index ok")
     return OUT
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--law", action="append", help="특정 법령만 (반복 가능)")
+    ap.add_argument(
+        "--skip-page-index",
+        action="store_true",
+        help="별표 페이지 인덱스 생성을 건너뜀",
+    )
     args = ap.parse_args()
+    # skip flag via env for nested call simplicity
+    if args.skip_page_index:
+        import os
+
+        os.environ["SAFE_LAW_SKIP_PAGE_INDEX"] = "1"
     asyncio.run(build(args.law))
 
 

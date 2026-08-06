@@ -26,6 +26,9 @@ from ..security import require_admin
 router = APIRouter(prefix="/api", tags=["docs-kosha"])
 
 _BYEOL_PAGE_INDEX: dict | None = None
+_BYEOL_INDEX_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "law" / "byeol_page_index.json"
+)
 
 
 def _load_byeol_page_index() -> dict:
@@ -33,9 +36,7 @@ def _load_byeol_page_index() -> dict:
     global _BYEOL_PAGE_INDEX
     if _BYEOL_PAGE_INDEX is not None:
         return _BYEOL_PAGE_INDEX
-    path = (
-        Path(__file__).resolve().parents[3] / "data" / "law" / "byeol_page_index.json"
-    )
+    path = _BYEOL_INDEX_PATH
     if not path.is_file():
         _BYEOL_PAGE_INDEX = {"version": 0, "count": 0, "by_fl_seq": {}}
         return _BYEOL_PAGE_INDEX
@@ -46,12 +47,55 @@ def _load_byeol_page_index() -> dict:
     return _BYEOL_PAGE_INDEX
 
 
+def _try_live_index_fl_seq(fl_seq: int) -> dict | None:
+    """인덱스 누락 시 런타임에 PDF 받아 페이지 매핑 (poppler 필요).
+
+    법령 개정으로 flSeq 가 바뀌었는데 배포 전일 때 보완.
+    성공 시 메모리 캐시 + (쓰기 가능하면) json 파일 갱신.
+    """
+    global _BYEOL_PAGE_INDEX
+    try:
+        # scripts/ 를 path 에 넣고 함수 재사용
+        root = Path(__file__).resolve().parents[3]
+        scripts = root / "scripts"
+        import sys
+
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from build_byeol_page_index import (  # type: ignore
+            index_one_fl_seq,
+            load_index,
+            merge_entry,
+            save_index,
+        )
+
+        entry = index_one_fl_seq(int(fl_seq))
+        if not entry:
+            return None
+        data = _load_byeol_page_index()
+        data = merge_entry(data, entry)
+        _BYEOL_PAGE_INDEX = data
+        # 컨테이너 쓰기 가능 시 디스크에도 (재시작 유지, free 플랜은 재배포 시 유실)
+        try:
+            save_index(data, _BYEOL_INDEX_PATH)
+        except OSError:
+            pass
+        return entry
+    except Exception:
+        return None
+
+
 @router.get("/law/byeol-page-index")
-async def byeol_page_index(fl_seq: int | None = Query(None, ge=1)):
+async def byeol_page_index(
+    fl_seq: int | None = Query(None, ge=1),
+    live: bool = Query(True, description="없으면 PDF 실시간 인덱싱 시도"),
+):
     """별표 PDF 페이지 인덱스. fl_seq 있으면 해당 건만."""
     data = _load_byeol_page_index()
     if fl_seq is not None:
         entry = (data.get("by_fl_seq") or {}).get(str(fl_seq))
+        if not entry and live:
+            entry = _try_live_index_fl_seq(int(fl_seq))
         if not entry:
             raise HTTPException(404, f"page index 없음 fl_seq={fl_seq}")
         return entry

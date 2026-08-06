@@ -67,6 +67,24 @@ ENABLE_LLM=true
 
 헬스: `https://safelaw.onrender.com/api/health`
 
+### 법령 개정 자동 반영
+
+| 층 | 동작 |
+|:---|:---|
+| **주간 Actions** | `.github/workflows/refresh-law.yml` — 매주 코퍼스+별표 페이지 인덱스 재생성 → `main` 커밋 → Render 배포 |
+| **수동 일괄** | `./scripts/refresh_law_data.sh` (로컬, `LAW_OC` + `pdftotext` 필요) |
+| **런타임 보완** | 페이지 인덱스에 없는 `fl_seq` 요청 시 서버가 PDF 받아 즉시 인덱싱 (poppler, 재시작 시 유실 가능) |
+
+GitHub **Settings → Secrets** 에 `LAW_OC` 를 넣어야 주간 워크플로가 동작한다.  
+Actions 탭에서 `refresh-law-data` → **Run workflow** 로 즉시 실행 가능.
+
+```bash
+# 로컬 수동
+./scripts/refresh_law_data.sh
+git add data/law/ && git commit -m "chore(law): 법령 코퍼스 갱신" && git push
+./scripts/deploy_render.sh   # auto-deploy 꺼져 있을 때
+```
+
 ### CLI
 
 ```bash

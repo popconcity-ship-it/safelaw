@@ -136,56 +136,141 @@ def index_pages(pages: list[str]) -> dict:
     }
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="", help="필터 (예: 별표35)")
-    ap.add_argument("--limit", type=int, default=0, help="최대 건수 (0=전체)")
-    args = ap.parse_args()
+def index_one_fl_seq(
+    fl_seq: int,
+    *,
+    law_name: str = "",
+    article_no: str = "",
+    title: str = "",
+    work_dir: Path | None = None,
+) -> dict | None:
+    """단일 fl_seq PDF → 페이지 인덱스 엔트리. 실패 시 None."""
+    own_td = None
+    if work_dir is None:
+        own_td = tempfile.TemporaryDirectory()
+        work_dir = Path(own_td.name)
+    try:
+        pdf = work_dir / f"{fl_seq}.pdf"
+        if not download_pdf(fl_seq, pdf):
+            return None
+        pages = pages_text(pdf)
+        if not pages:
+            return None
+        idx = index_pages(pages)
+        idx.update(
+            {
+                "law_name": law_name,
+                "article_no": article_no,
+                "title": title,
+                "fl_seq": int(fl_seq),
+            }
+        )
+        return idx
+    finally:
+        if own_td is not None:
+            own_td.cleanup()
 
-    targets = collect_targets(args.only or None)
-    if args.limit:
-        targets = targets[: args.limit]
+
+def load_index(path: Path = OUT) -> dict:
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"version": 1, "count": 0, "by_fl_seq": {}}
+
+
+def save_index(data: dict, path: Path = OUT) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = dict(data)
+    data["count"] = len(data.get("by_fl_seq") or {})
+    data["version"] = data.get("version") or 1
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def merge_entry(data: dict, entry: dict) -> dict:
+    fl = str(entry.get("fl_seq") or "")
+    if not fl:
+        return data
+    by = dict(data.get("by_fl_seq") or {})
+    by[fl] = entry
+    data = dict(data)
+    data["by_fl_seq"] = by
+    data["count"] = len(by)
+    return data
+
+
+def build_index(
+    *,
+    only: str = "",
+    limit: int = 0,
+    out_path: Path = OUT,
+    merge: bool = False,
+) -> int:
+    """코퍼스 기준 별표 PDF 페이지 인덱스 생성. 성공 건수 반환."""
+    targets = collect_targets(only or None)
+    if limit:
+        targets = targets[:limit]
     print(f"targets: {len(targets)}")
 
-    by_fl: dict[str, dict] = {}
+    existing = load_index(out_path) if merge else {"version": 1, "count": 0, "by_fl_seq": {}}
+    by_fl: dict[str, dict] = dict(existing.get("by_fl_seq") or {}) if merge else {}
     ok = 0
     with tempfile.TemporaryDirectory() as td:
         tdir = Path(td)
         for n, t in enumerate(targets, 1):
             fl = t["fl_seq"]
             print(f"[{n}/{len(targets)}] {t['law_name']} {t['article_no']} fl={fl}")
-            pdf = tdir / f"{fl}.pdf"
-            if not download_pdf(fl, pdf):
-                print("  skip: not pdf")
-                continue
-            pages = pages_text(pdf)
-            if not pages:
-                print("  skip: no text")
-                continue
-            idx = index_pages(pages)
-            idx.update(
-                {
-                    "law_name": t["law_name"],
-                    "article_no": t["article_no"],
-                    "title": t["title"],
-                    "fl_seq": fl,
-                }
+            entry = index_one_fl_seq(
+                fl,
+                law_name=t["law_name"],
+                article_no=t["article_no"],
+                title=t["title"],
+                work_dir=tdir,
             )
-            by_fl[str(fl)] = idx
+            if not entry:
+                print("  skip: download/text fail")
+                continue
+            by_fl[str(fl)] = entry
             ok += 1
-            # sample
-            sample = list(idx["by_label"].items())[:3]
-            print(f"  pages={idx['pages']} anchors={len(idx['anchors'])} e.g. {sample}")
+            sample = list(entry["by_label"].items())[:3]
+            print(f"  pages={entry['pages']} anchors={len(entry['anchors'])} e.g. {sample}")
 
-    out = {
-        "version": 1,
-        "count": ok,
-        "by_fl_seq": by_fl,
-    }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {OUT} ({ok} entries, {OUT.stat().st_size} bytes)")
-    return 0 if ok else 1
+    out = {"version": 1, "count": len(by_fl), "by_fl_seq": by_fl}
+    save_index(out, out_path)
+    print(f"wrote {out_path} ({len(by_fl)} entries, {out_path.stat().st_size} bytes)")
+    return ok
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", default="", help="필터 (예: 별표35)")
+    ap.add_argument("--limit", type=int, default=0, help="최대 건수 (0=전체)")
+    ap.add_argument(
+        "--merge",
+        action="store_true",
+        help="기존 인덱스에 병합 (신규 fl_seq 추가·갱신)",
+    )
+    ap.add_argument(
+        "--fl-seq",
+        type=int,
+        default=0,
+        help="단일 fl_seq 만 인덱싱 후 병합 저장",
+    )
+    args = ap.parse_args()
+
+    if args.fl_seq:
+        entry = index_one_fl_seq(args.fl_seq)
+        if not entry:
+            print("fail")
+            return 1
+        data = merge_entry(load_index(), entry)
+        save_index(data)
+        print(f"merged fl_seq={args.fl_seq} pages={entry['pages']}")
+        return 0
+
+    n = build_index(only=args.only, limit=args.limit, merge=args.merge)
+    return 0 if n else 1
 
 
 if __name__ == "__main__":

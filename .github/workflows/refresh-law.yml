@@ -1,0 +1,64 @@
+# 법령 개정 반영: 주 1회 코퍼스 + 별표 페이지 인덱스 재생성 후 main 에 커밋
+# Render 가 main 배포에 연결돼 있으면 자동 배포됨.
+#
+# 필요 Secrets (repo Settings → Secrets):
+#   LAW_OC          법제처 Open API OC
+#   (선택) LAW_USER_AGENT, LAW_REFERER — 없으면 기본값
+
+name: refresh-law-data
+
+on:
+  schedule:
+    # 매주 화 03:00 KST = 월 18:00 UTC
+    - cron: "0 18 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip
+          pip install -r backend/requirements.txt
+
+      - name: Build corpus + page index
+        env:
+          LAW_OC: ${{ secrets.LAW_OC }}
+          LAW_USER_AGENT: ${{ secrets.LAW_USER_AGENT }}
+          LAW_REFERER: ${{ secrets.LAW_REFERER }}
+          DEMO_MODE: "0"
+        run: |
+          if [ -z "$LAW_OC" ]; then
+            echo "LAW_OC secret 없음 — workflow_dispatch 전에 Secrets 설정 필요"
+            exit 1
+          fi
+          export PYTHONPATH=backend
+          python scripts/build_law_corpus.py --skip-page-index
+          python scripts/build_byeol_page_index.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "safelaw-bot"
+          git config user.email "safelaw-bot@users.noreply.github.com"
+          git add data/law/corpus.jsonl data/law/byeol_page_index.json
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "chore(law): 주간 법령 코퍼스·별표 페이지 인덱스 갱신"
+            git push origin HEAD:main
+          fi
