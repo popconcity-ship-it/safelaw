@@ -689,6 +689,12 @@
     .msg.bot .law-card.flash {
       box-shadow: 0 0 0 2px #3b82f6;
     }
+    .msg.bot .hang-flash {
+      background: #fef08a !important;
+      border-radius: 4px;
+      outline: 2px solid #eab308;
+      transition: background 0.2s;
+    }
     .msg.bot .kosha-section {
       margin: 12px 0 6px;
     }
@@ -1319,6 +1325,12 @@
     function lightMd(text) {
       // 중복 단독 인용 줄·꼬리 제거 → 문단 흐름 유지
       let raw = stripStandaloneCiteLines(text);
+      // LLM이 프롬프트 자리표시자를 그대로 뱉는 경우 제거
+      raw = raw
+        .replace(/\[?\s*법령(?:정식)?명\s*제N조\s*\]?/gi, "")
+        .replace(/제N조/g, "")
+        .replace(/\[\s*…\s*별표\s*N\s*\]/gi, "")
+        .replace(/[ \t]{2,}/g, " ");
       let t = esc(raw);
       t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
       t = t.replace(/`([^`]+)`/g, "<code style='font-size:0.85em;background:var(--surface2);padding:1px 6px;border-radius:4px'>$1</code>");
@@ -1401,23 +1413,41 @@
 
     function linkifyLawCites(html) {
       let t = html;
-      // 산업안전보건법 시행령 제119조 / [산안법 시행규칙 제37조] 등
-      const re =
-        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙|사업장\s*위험성평가에\s*관한\s*지침)(?:\s*시행령|\s*시행규칙)?\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조)\]?/g;
-      t = t.replace(re, (m, full, main, sub) => {
+      const slots = [];
+      const hold = (btnHtml) => {
+        slots.push(btnHtml);
+        return `\uE000${slots.length - 1}\uE001`;
+      };
+      // 항·호 포함 1회 매칭 (중복 칩·버튼 안 재매치 방지)
+      const reArt =
+        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙|사업장\s*위험성평가에\s*관한\s*지침|법)(?:\s*시행령|\s*시행규칙)?\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+(?:의\d+)?)\s*호)?)\]?/g;
+      t = t.replace(reArt, (m, full, main, sub, hang, ho) => {
         const art = sub ? `${main}의${sub}` : String(main);
-        const label = full.replace(/^\[/, "").replace(/\]$/, "");
-        // 법령명만 추출 (…제N조 앞)
-        const lawPart = label.replace(/\s*제\s*\d+(?:의\d+)?\s*조\s*$/, "").trim();
-        const lawKey = normalizeLawKey(lawPart);
-        const shown = shortCiteLabel(label);
-        const tierCls = citeTierClass(lawPart, art);
-        return (
-          `<button type="button" class="law-cite ${tierCls}" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label)} · 조문 전문">` +
-          `${esc(shown)}</button>`
+        let label = full.replace(/^\[/, "").replace(/\]$/, "");
+        if (/^법\s*제/.test(label)) {
+          label = "산업안전보건법 " + label.replace(/^법\s*/, "");
+        }
+        const lawPart = label
+          .replace(
+            /\s*제\s*\d+(?:의\d+)?\s*조(?:\s*제\s*\d+\s*항)?(?:\s*제\s*\d+(?:의\d+)?\s*호)?\s*$/,
+            ""
+          )
+          .trim();
+        const lawKey = normalizeLawKey(lawPart || "산업안전보건법");
+        let shown = shortCiteLabel(label);
+        if (hang) {
+          const base = shortCiteLabel((lawPart || "산안법") + ` 제${art}조`);
+          shown = base + ` 제${hang}항` + (ho ? `제${ho}호` : "");
+        }
+        const tierCls = citeTierClass(lawPart || "산업안전보건법", art);
+        const hangAttr = hang ? ` data-hang="${esc(String(hang))}"` : "";
+        const hoAttr = ho ? ` data-ho="${esc(String(ho))}"` : "";
+        return hold(
+          `<button type="button" class="law-cite ${tierCls}" data-art="${esc(art)}" data-law="${esc(lawKey)}"${hangAttr}${hoAttr} title="${esc(label)} · 조문 전문">` +
+            `${esc(shown)}</button>`
         );
       });
-      // [산업안전보건법 시행령 별표 35] · 별표|35
+      // 별표 N
       t = t.replace(
         /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)(?:\s*시행령|\s*시행규칙)?\s*)?별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?\]?/g,
         (m, lawPref, n, sub) => {
@@ -1425,13 +1455,13 @@
           const label = (lawPref || "") + (sub ? `별표 ${n}의${sub}` : `별표 ${n}`);
           const lawKey = normalizeLawKey((lawPref || "").trim());
           const shown = shortCiteLabel(label.trim());
-          return (
+          return hold(
             `<button type="button" class="law-cite cite-schedule" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label.trim())} · 별표 보기">` +
-            `${esc(shown)}</button>`
+              `${esc(shown)}</button>`
           );
         }
       );
-      return t;
+      return t.replace(/\uE000(\d+)\uE001/g, (_, i) => slots[+i] || "");
     }
 
     /** 조문/별표 카드 본문용: 키워드 형광 + 별표 클릭 링크 */
@@ -1476,8 +1506,10 @@
       }
     }
 
-    /** 같은 답변 말풍선 안의 조문 카드 펼침 + 스크롤 */
-    function openLawCite(art, scopeEl, lawHint) {
+    const HANG_MARKS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮";
+
+    /** 같은 답변 말풍선 안의 조문 카드 펼침 + 스크롤 (+ 항 하이라이트) */
+    function openLawCite(art, scopeEl, lawHint, hangNo) {
       const root = scopeEl || messagesEl;
       if (!root || !art) return;
       const want = String(art).replace(/\s/g, "");
@@ -1525,6 +1557,41 @@
       card.classList.add("flash");
       setTimeout(() => card.classList.remove("flash"), 1200);
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      // 항 번호 있으면 본문 해당 항으로 스크롤·형광
+      const hn = parseInt(hangNo, 10);
+      if (hn >= 1 && hn <= 15) {
+        const mark = HANG_MARKS[hn - 1];
+        const bd = card.querySelector(".law-bd") || card;
+        // 이전 하이라이트 제거
+        bd.querySelectorAll(".hang-flash").forEach((el) => {
+          el.classList.remove("hang-flash");
+        });
+        let target = null;
+        const hangs = bd.querySelectorAll(".hang");
+        for (const h of hangs) {
+          const tx = h.textContent || "";
+          if (tx.includes(mark) || tx.startsWith(String(hn) + ".") || tx.includes(`제${hn}항`)) {
+            target = h;
+            break;
+          }
+        }
+        if (!target && mark) {
+          // 텍스트 노드에서 항 기호 찾기
+          const walker = document.createTreeWalker(bd, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) {
+            if ((node.textContent || "").includes(mark)) {
+              target = node.parentElement;
+              break;
+            }
+          }
+        }
+        if (target) {
+          target.classList.add("hang-flash");
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+          setTimeout(() => target.classList.remove("hang-flash"), 2200);
+        }
+      }
     }
 
     /** KOSHA 검색 결과 카드 (발췌 + PDF 링크) — LLM 유무와 무관하게 항상 표시 */
@@ -2762,7 +2829,8 @@
       openLawCite(
         btn.getAttribute("data-art"),
         btn.closest(".msg.bot") || messagesEl,
-        btn.getAttribute("data-law") || ""
+        btn.getAttribute("data-law") || "",
+        btn.getAttribute("data-hang") || ""
       );
     });
 

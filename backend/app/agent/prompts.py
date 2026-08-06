@@ -9,27 +9,27 @@ SYSTEM_PROMPT = """당신은 산업안전·중대재해 분야 법규 도우미 
 
 ## 절대 규칙
 1. 아래에 제공된 [근거 조문]에 있는 내용만 법적 근거로 인용하세요.
-2. 근거 조문에 없는 조항 번호·제목을 지어내지 마세요.
-3. 조문 인용은 문장 안에만 `[법령정식명 제N조]` 로 한 번 넣으세요.
-   - 같은 조문을 문장 뒤·다음 줄에 다시 쓰지 마세요.
-   - 인용만 있는 단독 줄 금지. (UI가 문장 안 링크·하단 카드로 보여 줍니다)
-4. 과태료·금액 질문: 근거에 「개별기준 행」·금액(만원)이 있으면 반드시 숫자로 답하세요.
-   - 1차·2차·3차 위반 금액을 구분 (단위: 만원 → 답변에는 "100만원"처럼 표기)
-   - 규모 감경·가중·감경 사유가 근거에 있으면 짧게 덧붙이세요
-   - 근거에 해당 행이 없으면 지어내지 말고 "해당 개별기준 행을 찾지 못했다"고 하세요
-   - "PDF를 보라"만으로 끝내지 마세요 (금액이 근거에 있을 때)
-5. 근거가 부족하면 "해당 조항을 확인할 수 없습니다"라고 말하고, 확인이 필요한 부분을 명시하세요.
-6. 실무 조언은 "참고"로 구분하고, 법적 의무와 혼동되지 않게 쓰세요.
-7. [KOSHA 가이드]는 실무 참고이며 법 조항처럼 인용하지 마세요.
-   본문 발췌·PDF 링크는 UI가 따로 붙이므로, 답변 본문에는 지침번호만
-   한 줄로 언급하거나 생략하세요. (긴 KOSHA 발췌 금지)
-8. 인사말·자기소개는 하지 마세요. 바로 본론으로.
-9. 답변 말미에 한 줄 면책: 참고용이며 최종 판단은 전문가/관할 기관 확인이 필요하다고 적으세요.
+2. 근거 조문에 없는 조항 번호·제목·금액을 지어내지 마세요.
+3. 조문 인용 형식 (실제 숫자로, 예시 문자 금지):
+   - 좋은 예: [산업안전보건법 제175조], [산업안전보건법 시행령 별표 35], [산업안전보건법 제114조]
+   - 항·호까지 쓸 때: [산업안전보건법 제175조제5항제3호] 또는 산안법 제175조제5항제3호
+   - ⛔ 금지: 제N조, [법령명 제N조], [법령정식명 제N조], "N조" 같은 자리표시자 문구를 그대로 출력
+   - 같은 조문을 문장 뒤·다음 줄에 반복하지 마세요. 인용만 있는 단독 줄 금지.
+4. 과태료·금액 질문: 근거에 「구조화 금액」 또는 개별기준 행이 있으면 반드시 숫자로 답하세요.
+   - 1차·2차·3차 위반을 구분해 "1차 100만원, 2차 200만원, 3차 500만원"처럼 쓰세요
+   - 3차 금액만 단독으로 "500만원입니다"라고 단정하지 마세요 (질문이 1회 위반일 수 있음)
+   - 규모 감경·가중이 근거에 있으면 짧게 덧붙이세요
+   - 근거에 행이 없을 때만 "개별기준 행을 찾지 못했다"고 하세요
+5. 근거 조문 블록에 해당 조가 있으면 "확인할 수 없습니다"라고 하지 마세요.
+6. 실무 조언은 "참고"로 구분하세요.
+7. [KOSHA 가이드]는 실무 참고이며 법 조항처럼 인용하지 마세요. 긴 KOSHA 발췌 금지.
+8. 인사말·자기소개 금지. 바로 본론.
+9. 말미 한 줄 면책: 참고용이며 최종 판단은 전문가/관할 기관 확인이 필요하다고 적으세요.
 
 ## 답변 형식
-- 결론 1~3문장 (질문에 yes/no·금액이 있으면 먼저 금액)
-- 관련 조문은 문장 속 `[법령명 제N조]` / `[… 별표 N]` 한 번만
-- KOSHA 장황한 나열·페이지 발췌 금지 (UI 카드로 표시됨)
+- 금액 질문: 첫 문장에 1·2·3차 금액 → 이어서 의무 조문·과태료 근거 조문 링크 형식 인용
+- 조문 인용은 문장 안 실제 조번호만 (자리표시자 금지)
+- KOSHA 장황 나열 금지
 """
 
 
@@ -117,10 +117,121 @@ def _normalize_byeol_text(body: str) -> str:
     return t
 
 
+def _repair_byeol_cites(text: str) -> str:
+    """표 줄바꿈으로 깨진 '제175조제5 항제3호' → '제175조제5항제3호'.
+
+    금액 행을 삼키지 않도록 짧은 공백·짧은 비숫자 간격만 연결.
+    """
+    t = text or ""
+    t = re.sub(
+        r"제\s*(\d+)\s*조\s*제?\s*(\d+)\s*항\s*제?\s*(\d+(?:의\d+)?)\s*호",
+        r"제\1조제\2항제\3호",
+        t,
+    )
+    t = re.sub(
+        r"제(\d+)조제(\d+)\s{0,4}항제(\d+(?:의\d+)?)호?",
+        r"제\1조제\2항제\3호",
+        t,
+    )
+    # 제175조제5 + (비숫자 짧은 조각) + 항제3호
+    t = re.sub(
+        r"제(\d+)조제(\d+)(?:\s+[^\d]{0,12}?)항제(\d+(?:의\d+)?)호",
+        r"제\1조제\2항제\3호",
+        t,
+    )
+    t = re.sub(r"법\s*제\s*(\d+)\s*조", r"법 제\1조", t)
+    return t
+
+
+def _structure_fine_chunk(chunk: str) -> str:
+    """평문 발췌 → LLM이 읽기 쉬운 구조화 금액 블록."""
+    raw = re.sub(r"\s{2,}", " ", chunk or "").strip()
+    if not raw:
+        return ""
+
+    # 금액은 원문에서 먼저 (cite 복구가 1) 행을 망가뜨릴 수 있음)
+    items: list[str] = []
+    for m in re.finditer(
+        r"(\d+)\)\s*([^0-9]{6,160}?)\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})",
+        raw,
+    ):
+        desc = re.sub(r"\s+", " ", m.group(2)).strip(" ·,")
+        # 게시/갖추/제공/제출 등 의미 토큰이 설명에 없으면 원문 근처 보강
+        if not any(k in desc for k in ("게시", "갖추", "제공", "제출", "경고", "선임", "작성")):
+            # 뒤 문맥 조금 포함
+            tail = raw[m.end() : m.end() + 40]
+            desc = (desc + " " + re.sub(r"\s+", " ", tail)).strip()[:90]
+        items.append(
+            f"  {m.group(1)}) {desc} → "
+            f"1차 {m.group(3)}만원 / 2차 {m.group(4)}만원 / 3차 {m.group(5)}만원"
+        )
+        if len(items) >= 5:
+            break
+
+    c = _repair_byeol_cites(raw)
+
+    # 표 칸 분리로 떨어진 항·호 힌트 수집 (제175조제5 … 항제3호)
+    for m in re.finditer(
+        r"제(\d+)조제(\d+)\b.{0,120}?항제(\d+(?:의\d+)?)호",
+        raw,
+    ):
+        fixed = f"제{m.group(1)}조제{m.group(2)}항제{m.group(3)}호"
+        if fixed not in c:
+            c = c + " " + fixed
+
+    duties = re.findall(
+        r"법\s*제\d+조(?:제\d+항)?(?:제\d+(?:의\d+)?호)?(?:부터\s*제\d+조(?:제\d+항)?(?:까지)?)?",
+        c,
+    )
+    bases = re.findall(r"제\d+조제\d+항제\d+(?:의\d+)?호", c)
+    duty_u: list[str] = []
+    base_u: list[str] = []
+    for d in duties:
+        if "175" in d:
+            base_u.append(d if d.startswith("법") else "법 " + d)
+        else:
+            duty_u.append(d)
+    for b in bases:
+        base_u.append("법 " + b if not b.startswith("법") else b)
+
+    def uniq(xs: list[str]) -> list[str]:
+        out: list[str] = []
+        for x in xs:
+            if x not in out:
+                out.append(x)
+        return out
+
+    duty_u, base_u = uniq(duty_u)[:3], uniq(base_u)[:4]
+
+    if not items:
+        for m in re.finditer(r"(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})", raw):
+            a, b, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if a > 3000 or b > 3000:
+                continue
+            items.append(
+                f"  (표기) 1차 {a}만원 / 2차 {b}만원 / 3차 {d}만원"
+            )
+            if len(items) >= 3:
+                break
+
+    lines = ["【구조화 금액 — 단위 만원, 지어내지 말고 아래만 인용】"]
+    if duty_u:
+        lines.append("의무 조문: " + ", ".join(duty_u))
+    if base_u:
+        lines.append("과태료 근거: " + ", ".join(base_u))
+    if items:
+        lines.append("개별 금액:")
+        lines.extend(items)
+    else:
+        lines.append("개별 금액: (숫자 파싱 실패 — 원문 참고)")
+    lines.append("원문 발췌: " + raw[:380])
+    return "\n".join(lines)
+
+
 def _extract_relevant_byeol_rows(
-    body: str, question: str, max_chars: int = 1100
+    body: str, question: str, max_chars: int = 1400
 ) -> str:
-    """질문 키워드가 있는 별표 개별기준 구간만 발췌 (금액 행 포함)."""
+    """질문 키워드가 있는 별표 개별기준 → 구조화 금액 발췌."""
     terms = _byeol_query_terms(question)
     if not terms or not body:
         return ""
@@ -128,7 +239,6 @@ def _extract_relevant_byeol_rows(
     m4 = re.search(r"4\.\s*개별기준", flat)
     area = flat[m4.start() :] if m4 else flat
 
-    # 핵심 키워드(주제) — 창 점수에 가중
     core = [
         t
         for t in terms
@@ -151,7 +261,6 @@ def _extract_relevant_byeol_rows(
     if not core:
         core = terms[:4]
 
-    # 모든 매치 위치
     positions: list[int] = []
     for term in terms:
         start = 0
@@ -172,7 +281,6 @@ def _extract_relevant_byeol_rows(
 
     def window_score(pos: int) -> int:
         w = area[max(0, pos - 120) : pos + 400]
-        # MSDS+미부착 질문: 물질안전 없는 창은 제외 (규정 게시 등 노이즈)
         if need_msds and ("물질안전" not in w):
             return -1
         if need_msds and need_post and not any(
@@ -186,21 +294,20 @@ def _extract_relevant_byeol_rows(
         for t in terms:
             if t in w:
                 s += 1
-        # 금액 숫자 패턴(1차·2차·3차 추정)
         if re.search(r"\d{1,4}\s+\d{1,4}\s+\d{1,4}", w):
             s += 2
         return s
 
-    # 점수 높은 위치 우선, 겹침 제거
     ranked = sorted(set(positions), key=lambda p: (-window_score(p), p))
-    merged: list[str] = []
-    used: list[tuple[int, int]] = []
+    raw_chunks: list[str] = []
+    used: list[int] = []
     for pos in ranked:
-        sc = window_score(pos)
-        if sc < 3:
+        if window_score(pos) < 3:
             continue
-        a = max(0, pos - 160)
-        b = min(len(area), pos + 450)
+        if any(abs(pos - u0) < 220 for u0 in used):
+            continue
+        a = max(0, pos - 180)
+        b = min(len(area), pos + 520)
         chunk = area[a:b]
         head = re.search(
             r"(?:[가-힣]{1,3}\.|[0-9]+\)|[가나다라마바사아자차카타파하]\))\s*법\s*제",
@@ -211,32 +318,43 @@ def _extract_relevant_byeol_rows(
         chunk = re.sub(r"\s{2,}", " ", chunk).strip()
         if len(chunk) < 40:
             continue
-        # 겹치면 스킵
-        if any(abs(pos - u0) < 200 for u0, _ in used):
-            continue
-        used.append((pos, pos + len(chunk)))
-        merged.append(chunk)
-        if sum(len(x) for x in merged) >= max_chars or len(merged) >= 3:
+        used.append(pos)
+        raw_chunks.append(chunk)
+        if len(raw_chunks) >= 2:
             break
 
-    if not merged:
-        # 폴백: 점수 무시하고 첫 매치 1개
+    if not raw_chunks:
         pos = ranked[0]
-        a, b = max(0, pos - 160), min(len(area), pos + 450)
+        a, b = max(0, pos - 180), min(len(area), pos + 520)
         chunk = re.sub(r"\s{2,}", " ", area[a:b]).strip()
         if chunk:
-            merged = [chunk]
+            raw_chunks = [chunk]
 
-    if not merged:
+    # 미부착/미게시 질문: 제출·수입 행 제외 (게시·갖추 행만)
+    if need_msds and need_post:
+        posted = [
+            ch
+            for ch in raw_chunks
+            if any(k in ch for k in ("게시", "갖추"))
+            and "제출하지" not in ch[:80]
+        ]
+        if posted:
+            raw_chunks = posted[:1]
+
+    if not raw_chunks:
         return ""
-    out = "\n\n---\n".join(merged)
+
+    structured = [_structure_fine_chunk(ch) for ch in raw_chunks]
+    structured = [s for s in structured if s]
+    out = "\n\n".join(structured)
     if len(out) > max_chars:
         out = out[:max_chars].rstrip() + "…"
     return (
-        "【질문 관련 개별기준 발췌 — 과태료 금액 단위: 만원 (1차·2차·3차 위반)】\n"
-        + out
-        + "\n\n(※ 위 숫자는 별표 표의 만원 단위. 예: 100 → 100만원. "
-        "사업장 규모 감경·가중·감경 사유는 일반기준 참고. 금액을 지어내지 말고 이 행만 인용.)"
+        out
+        + "\n\n(※ 금액은 별표 표의 만원 단위. 1회 위반이면 보통 1차 금액. "
+        "규모 감경·가중 가능. 답변에 1·2·3차를 모두 쓰고, 자리표시자(제N조) 금지. "
+        "의무 조문·과태료 근거는 [산업안전보건법 제114조] [산업안전보건법 제175조제5항제3호] "
+        "처럼 실제 번호로 인용.)"
     )
 
 
