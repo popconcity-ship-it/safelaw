@@ -477,6 +477,38 @@
       overflow-wrap: anywhere;
       word-break: keep-all;
     }
+    /* 검색 키워드 — 볼드 + 형광펜 */
+    .msg.bot mark.kw-hit {
+      background: linear-gradient(180deg, #fef08a 35%, #fde047 100%);
+      color: #0f172a;
+      font-weight: 700;
+      padding: 0 0.12em;
+      border-radius: 3px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+    }
+    .kw-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 0 0 10px;
+      align-items: center;
+    }
+    .kw-chips-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .kw-chip {
+      font-size: 0.72rem;
+      font-weight: 650;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #fef9c3;
+      border: 1px solid #facc15;
+      color: #854d0e;
+      line-height: 1.3;
+    }
     .msg.bot .law-bd .hang:last-child { margin-bottom: 0; }
     .msg.bot .law-cite {
       display: inline;
@@ -996,8 +1028,9 @@
     }
 
     /** KOSHA 검색 결과 카드 (발췌 + PDF 링크) — LLM 유무와 무관하게 항상 표시 */
-    function renderKoshaCards(sources) {
+    function renderKoshaCards(sources, keywords) {
       if (!sources || !sources.length) return "";
+      keywords = keywords || [];
       const cards = sources
         .map((k) => {
           const code = k.code || "";
@@ -1009,8 +1042,10 @@
           if (ex.length > 220) ex = ex.slice(0, 220).replace(/\s+\S*$/, "") + "…";
           return (
             `<div class="kosha-card">` +
-            `<div class="kosha-card-hd"><code>${esc(code)}</code> ${esc(title)}</div>` +
-            (ex ? `<div class="kosha-card-ex">${esc(ex)}</div>` : "") +
+            `<div class="kosha-card-hd"><code>${esc(code)}</code> ${highlightKeywords(title, keywords)}</div>` +
+            (ex
+              ? `<div class="kosha-card-ex">${highlightKeywords(ex, keywords)}</div>`
+              : "") +
             `<div class="kosha-card-links">` +
             (pdf
               ? `<a href="${esc(pdf)}" target="_blank" rel="noopener">📄 원문 PDF</a>`
@@ -1037,10 +1072,11 @@
       // LLM/템플릿에 섞인 KOSHA 장문 섹션 제거 (카드로 대체)
       raw = raw.replace(/\n*###\s*KOSHA GUIDE[\s\S]*$/i, "").trim();
       raw = raw.replace(/\n*참고로,\s*KOSHA[\s\S]*?(?=\n*참고용|$)/i, "").trim();
+      const keywords = extractSearchKeywords(question || "");
       return (
         lightMd(raw) +
         renderLawCards(articles, question) +
-        renderKoshaCards(koshaSources)
+        renderKoshaCards(koshaSources, keywords)
       );
     }
 
@@ -1116,8 +1152,61 @@
       return out.join("\n");
     }
 
+    /**
+     * 질문에서 하이라이트용 검색어 추출.
+     * 긴 어절 우선(산업안전지도사 > 산업안전), 조사·잡음 제외.
+     */
+    function extractSearchKeywords(question) {
+      const stop = new Set([
+        "있는", "없는", "하는", "하여", "대한", "위한", "관련", "알려", "주세요",
+        "무엇", "어떻게", "있나요", "인가요", "하나요", "뭐예요", "경우", "또는",
+        "그리고", "내용", "조문", "규정", "알려줘", "알려주", "해주세요", "해주세요",
+        "되나요", "됩니까", "입니까", "인가요", "해요", "인가요", "여부", "인가요",
+        "의무", "해야", "한다", "되는", "되는가", "입니까", "인가요",
+      ]);
+      const raw = String(question || "").match(/[가-힣a-zA-Z0-9]{2,}/g) || [];
+      const seen = new Set();
+      const out = [];
+      for (const t of raw) {
+        const k = t.toLowerCase();
+        if (stop.has(t) || stop.has(k) || seen.has(k)) continue;
+        // 너무 흔한 1음절 반복 방지 — 이미 2글자+
+        seen.add(k);
+        out.push(t);
+      }
+      out.sort((a, b) => b.length - a.length || a.localeCompare(b, "ko"));
+      return out.slice(0, 10);
+    }
+
+    /** plain → HTML, 키워드만 <mark class="kw-hit"> (XSS 안전: 전부 esc) */
+    function highlightKeywords(text, keywords) {
+      const plain = String(text || "");
+      if (!plain) return "";
+      if (!keywords || !keywords.length) return esc(plain);
+      const parts = keywords
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .filter(Boolean);
+      if (!parts.length) return esc(plain);
+      const re = new RegExp("(" + parts.join("|") + ")", "gi");
+      let out = "";
+      let last = 0;
+      let m;
+      let n = 0;
+      const MAX = 48;
+      while ((m = re.exec(plain)) !== null && n < MAX) {
+        out += esc(plain.slice(last, m.index));
+        out += `<mark class="kw-hit">${esc(m[0])}</mark>`;
+        last = m.index + m[0].length;
+        n++;
+      }
+      out += esc(plain.slice(last));
+      return out;
+    }
+
     /** 본문 HTML — 항(①②)·호 단위 (고아 번호 줄 제거 후) */
-    function lawBodyHtml(body, titleHint) {
+    function lawBodyHtml(body, titleHint, keywords) {
       let t = normalizeLawBody(body);
       if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       // 카드 헤더에 이미 있는 「제N조(제목)」 접두만 제거.
@@ -1139,12 +1228,39 @@
       if (!parts.length) {
         return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
       }
-      return parts.map((line) => `<div class="hang">${esc(line)}</div>`).join("");
+      return parts
+        .map(
+          (line) =>
+            `<div class="hang">${highlightKeywords(line, keywords)}</div>`
+        )
+        .join("");
     }
 
-    /** articles_used → 요약 노출 + 전문 펼침 카드 */
+    /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트) */
     function renderLawCards(articles, question) {
       if (!articles || !articles.length) return "";
+      const keywords = extractSearchKeywords(question || "");
+      // 카드에 실제로 등장하는 키워드만 칩으로 (노이즈 칩 방지)
+      const hitKeys = [];
+      if (keywords.length) {
+        const blob = articles
+          .map(
+            (a) =>
+              `${a.law_name || ""} ${a.title || ""} ${a.body || ""}`
+          )
+          .join("\n");
+        for (const k of keywords) {
+          if (blob.toLowerCase().includes(k.toLowerCase())) hitKeys.push(k);
+        }
+      }
+      const chipBar = hitKeys.length
+        ? `<div class="kw-chips" aria-label="검색어 강조">` +
+          `<span class="kw-chips-label">검색어</span>` +
+          hitKeys
+            .map((k) => `<span class="kw-chip">${esc(k)}</span>`)
+            .join("") +
+          `</div>`
+        : "";
       const cards = articles
         .map((a) => {
           const art = String(a.article_no || "").replace(/\s/g, "");
@@ -1156,15 +1272,17 @@
             `<div class="law-card" data-art="${esc(art)}">` +
             `<div class="law-top">` +
             `<div class="law-top-text">` +
-            `<div class="law-hd-title">[${esc(cite)}]</div>` +
-            (title ? `<div class="law-hd-sub">${esc(title)}</div>` : "") +
+            `<div class="law-hd-title">[${highlightKeywords(cite, keywords)}]</div>` +
+            (title
+              ? `<div class="law-hd-sub">${highlightKeywords(title, keywords)}</div>`
+              : "") +
             `</div>` +
             `<button type="button" class="law-hd-action" aria-expanded="false">▼ 전문</button>` +
             `</div>` +
             (sum
-              ? `<div class="law-sum"><span class="law-sum-label">핵심 요약</span>${esc(sum)}</div>`
+              ? `<div class="law-sum"><span class="law-sum-label">핵심 요약</span>${highlightKeywords(sum, keywords)}</div>`
               : "") +
-            `<div class="law-bd">${lawBodyHtml(body, title)}</div>` +
+            `<div class="law-bd">${lawBodyHtml(body, title, keywords)}</div>` +
             `</div>`
           );
         })
@@ -1172,7 +1290,8 @@
       return (
         `<div class="law-section">` +
         `<div class="law-section-title">관련 법령</div>` +
-        `<p class="law-section-hint">요약을 읽고, ▼ 전문으로 전체 조문을 확인하세요 · ${articles.length}건</p>` +
+        `<p class="law-section-hint">노란 형광 = 질문에 나온 말 · ▼ 전문으로 전체 조문 · ${articles.length}건</p>` +
+        chipBar +
         cards +
         `</div>`
       );
