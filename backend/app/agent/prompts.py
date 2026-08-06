@@ -406,7 +406,53 @@ def _is_boiler_penalty_query(question: str) -> bool:
     # 명시 과태료 질문이 아니면 벌칙(검사 미수검) 쪽으로 본다
     if "과태료" in q and not any(k in q for k in ("처벌", "벌칙", "안받", "미검사")):
         return False
-    return any(k in q for k in ("처벌", "벌칙", "안받", "미검사", "미수검", "검사 안", "받지"))
+    return any(
+        k in q
+        for k in (
+            "처벌",
+            "벌칙",
+            "안받",
+            "미검사",
+            "미수검",
+            "검사 안",
+            "받지",
+            "안 받",
+            "미실시",
+        )
+    )
+
+
+def boiler_penalty_fixed_answer() -> str:
+    """보일러·검사대상기기 미수검 처벌 — LLM 없이 고정 답변.
+
+    모델이 산안법 과태료(100/200/500)를 반복 환각하는 구간이므로
+    조문이 명확한 이 질문은 템플릿으로 확정한다.
+    """
+    return (
+        "**1년 이하의 징역 또는 1천만원 이하의 벌금**\n\n"
+        "검사대상기기(보일러 등) 검사를 받지 않으면 "
+        "[에너지이용 합리화법 제73조] 제1호에 따라 위 벌칙에 처할 수 있습니다.\n\n"
+        "- **검사 의무**: [에너지이용 합리화법 제39조] "
+        "(제조·설치·장소변경·재사용·계속사용 검사 등)\n"
+        "- **벌칙**: [에너지이용 합리화법 제73조] "
+        "「제39조제1항·제2항 또는 제4항을 위반하여 검사를 받지 아니한 자」\n\n"
+        "※ 산안법 제114조·제175조·별표35 **물질안전보건자료(MSDS) 과태료**"
+        "(1·2·3차 100/200/500만)와는 **다른 법률**입니다. "
+        "1·2·3차 과태료 형식으로 답하지 마세요.\n\n"
+        "※ 참고용 · 최종 판단은 전문가·관할 기관 확인"
+    )
+
+
+def answer_looks_like_msds_fine_hallucination(answer: str) -> bool:
+    """보일러 질문에 산안법 MSDS 과태료 패턴이 섞였는지."""
+    t = answer or ""
+    if re.search(r"1\s*차\s*100\s*만", t) and re.search(r"2\s*차\s*200\s*만", t):
+        return True
+    if "제114조" in t and ("제175" in t or "175조" in t):
+        return True
+    if "물질안전" in t and re.search(r"1\s*차\s*\d+\s*만", t):
+        return True
+    return False
 
 
 def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str:

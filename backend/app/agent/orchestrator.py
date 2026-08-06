@@ -27,6 +27,9 @@ from ..models.schemas import (
 )
 from .prompts import (
     SYSTEM_PROMPT,
+    _is_boiler_penalty_query,
+    answer_looks_like_msds_fine_hallucination,
+    boiler_penalty_fixed_answer,
     build_user_prompt,
     demo_answer,
     format_articles_block,
@@ -76,6 +79,7 @@ class Orchestrator:
         import asyncio
 
         intent = classify_intent(message)
+        boiler_penalty = _is_boiler_penalty_query(message)
         # KOSHA PDF 32k 청크 스캔은 비쌈 → 가이드 의도일 때만
         # 법조·과태료·제N조 질문은 시드/카탈로그만 (체감 지연↓)
         want_pdf = intent in ("kosha", "risk_assessment", "education")
@@ -85,10 +89,11 @@ class Orchestrator:
         ):
             want_pdf = True
         # 처벌·벌칙·과태료 질문: 법 조문이 본선 — KOSHA 노이즈 최소화
-        legal_focus = any(
-            k in message for k in ("처벌", "벌칙", "과태료", "얼마", "부과")
-        ) and not any(
-            k in message for k in ("KOSHA", "kosha", "가이드", "기술지침")
+        legal_focus = boiler_penalty or (
+            any(k in message for k in ("처벌", "벌칙", "과태료", "얼마", "부과"))
+            and not any(
+                k in message for k in ("KOSHA", "kosha", "가이드", "기술지침")
+            )
         )
         kosha_limit = 0 if legal_focus else (3 if want_pdf else 2)
 
@@ -106,6 +111,9 @@ class Orchestrator:
             self.law.get_articles_for_query(message, limit=5),
             _kosha(),
         )
+        if boiler_penalty:
+            articles = self._force_boiler_penalty_articles(articles)
+            kosha_hits = []
         from ..kosha.pdf_pipeline import local_pdf_url
 
         kosha_sources = [
@@ -166,6 +174,11 @@ class Orchestrator:
                 "상단 문서 영역에서 복사·다운로드할 수 있습니다. "
                 "현장 실정에 맞게 수정하세요."
             )
+        elif boiler_penalty:
+            # LLM 환각(산안법 100/200/500) 방지 — 조문 고정 답변
+            intent = "boiler_penalty"
+            answer = boiler_penalty_fixed_answer()
+            kosha_sources = []
         elif self.settings.use_demo_llm:
             answer = demo_answer(message, articles, kosha_hits)
         else:
@@ -179,11 +192,22 @@ class Orchestrator:
                 kosha_hits=kosha_hits,
                 kosha_block=short_kosha,
             )
+            # 안전망: LLM이 MSDS 과태료를 섞으면 고정 답으로 교체
+            if boiler_penalty or (
+                _is_boiler_penalty_query(message)
+                and answer_looks_like_msds_fine_hallucination(answer)
+            ):
+                answer = boiler_penalty_fixed_answer()
+                articles = self._force_boiler_penalty_articles(articles)
+                kosha_sources = []
 
         # 답변·조문 본문에 인용된 조/별표가 카드에 없으면 코퍼스 보강
-        if not document_payload:
+        if not document_payload and not boiler_penalty:
             articles = self._enrich_articles_from_answer(answer, articles)
             articles = self._enrich_byeol_from_articles(articles)
+        elif boiler_penalty:
+            # 고정 답 인용만 반영 (산안법 환각 인용 차단)
+            articles = self._force_boiler_penalty_articles(articles)
 
         # 인용 재조회(법제처)는 느림 → 이미 확보한 조문으로 가벼운 검증만
         citations = self._citations_from_articles(answer, articles)
@@ -199,6 +223,49 @@ class Orchestrator:
             intent=intent,
             demo=self.settings.use_demo_law or self.settings.use_demo_llm,
         )
+
+    def _force_boiler_penalty_articles(self, articles: list[Article]) -> list[Article]:
+        """에너지법 제39·73 고정 + 산안법/별지/과태료 별표 제거."""
+        from ..law.corpus import article_from_row, get_corpus_article
+
+        forced: list[Article] = []
+        for law, art in (
+            ("에너지이용 합리화법", "39"),
+            ("에너지이용 합리화법", "73"),
+            ("열사용기자재의 검사 및 검사면제에 관한 기준", "개요"),
+            ("열사용기자재의 검사 및 검사면제에 관한 기준", "2편"),
+        ):
+            hit = get_corpus_article(law, art)
+            if hit:
+                forced.append(article_from_row(hit))
+
+        def _ok(a: Article) -> bool:
+            law = a.law_name or ""
+            art = str(a.article_no or "")
+            if art.startswith("별지") or "서식" in (a.title or ""):
+                return False
+            if "산업안전보건" in law:
+                return False
+            if art.startswith("별표") and "에너지" in law:
+                return False  # 별표5 과태료 혼동 방지
+            if "에너지" in law or "열사용" in law:
+                return True
+            return False
+
+        seen = {
+            (self._norm_law(a.law_name), str(a.article_no)) for a in forced
+        }
+        for a in articles:
+            if not _ok(a):
+                continue
+            key = (self._norm_law(a.law_name), str(a.article_no))
+            if key in seen:
+                continue
+            seen.add(key)
+            forced.append(a)
+            if len(forced) >= 5:
+                break
+        return forced[:5]
 
     @staticmethod
     def _norm_law(s: str) -> str:
