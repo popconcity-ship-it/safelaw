@@ -405,7 +405,82 @@
       background: #fff;
       margin: 0 0 10px;
       overflow: hidden;
+      border-left-width: 4px;
+      border-left-style: solid;
+      border-left-color: #94a3b8;
+      transition: box-shadow 0.15s, border-color 0.15s;
     }
+    /* 법령 위계: 법률 > 시행령 > 시행규칙 > 지침 > 별표 */
+    .msg.bot .law-card.law-tier-act {
+      border-left-color: #1d4ed8;
+      box-shadow: 0 1px 3px rgba(29, 78, 216, 0.08);
+    }
+    .msg.bot .law-card.law-tier-act .law-top { background: #eff6ff; }
+    .msg.bot .law-card.law-tier-decree {
+      border-left-color: #7c3aed;
+      margin-left: 6px;
+    }
+    .msg.bot .law-card.law-tier-decree .law-top { background: #f5f3ff; }
+    .msg.bot .law-card.law-tier-rule {
+      border-left-color: #0d9488;
+      margin-left: 12px;
+    }
+    .msg.bot .law-card.law-tier-rule .law-top { background: #f0fdfa; }
+    .msg.bot .law-card.law-tier-guide {
+      border-left-color: #64748b;
+      margin-left: 12px;
+    }
+    .msg.bot .law-card.law-tier-guide .law-top { background: #f8fafc; }
+    .msg.bot .law-card.law-tier-schedule {
+      border-left-color: #d97706;
+      margin-left: 18px;
+      border-style: solid;
+      border-color: #fde68a;
+      border-left-width: 4px;
+      background: #fffbeb;
+    }
+    .msg.bot .law-card.law-tier-schedule .law-top { background: #fff7ed; }
+    .msg.bot .law-tier-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 2px 7px;
+      border-radius: 999px;
+      margin-right: 6px;
+      vertical-align: middle;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+    .law-tier-act .law-tier-badge { background: #dbeafe; color: #1e40af; }
+    .law-tier-decree .law-tier-badge { background: #ede9fe; color: #6d28d9; }
+    .law-tier-rule .law-tier-badge { background: #ccfbf1; color: #0f766e; }
+    .law-tier-guide .law-tier-badge { background: #e2e8f0; color: #475569; }
+    .law-tier-schedule .law-tier-badge { background: #fde68a; color: #b45309; }
+    .law-tier-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      margin: 0 0 10px;
+      font-size: 0.7rem;
+      color: #64748b;
+      align-items: center;
+    }
+    .law-tier-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .law-tier-legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+    .law-tier-legend .lg-act { background: #1d4ed8; }
+    .law-tier-legend .lg-decree { background: #7c3aed; }
+    .law-tier-legend .lg-rule { background: #0d9488; }
+    .law-tier-legend .lg-schedule { background: #d97706; }
     .msg.bot .law-top {
       display: flex;
       align-items: flex-start;
@@ -1682,7 +1757,26 @@
         .join("");
     }
 
-    /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트) */
+    /** 법령 위계 티어: 법률 > 시행령 > 시행규칙 > 지침 > 별표 */
+    function lawTierOf(lawName, articleNo) {
+      const art = String(articleNo || "");
+      const n = String(lawName || "");
+      if (art.startsWith("별표") || art.startsWith("별지")) {
+        return { key: "schedule", label: "별표", order: 5, cls: "law-tier-schedule" };
+      }
+      if (n.includes("시행규칙") || n.includes("기준에 관한 규칙")) {
+        return { key: "rule", label: "시행규칙", order: 3, cls: "law-tier-rule" };
+      }
+      if (n.includes("시행령")) {
+        return { key: "decree", label: "시행령", order: 2, cls: "law-tier-decree" };
+      }
+      if (n.includes("지침") || n.includes("고시")) {
+        return { key: "guide", label: "지침", order: 4, cls: "law-tier-guide" };
+      }
+      return { key: "act", label: "법률", order: 1, cls: "law-tier-act" };
+    }
+
+    /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트 + 위계 스타일) */
     function renderLawCards(articles, question) {
       if (!articles || !articles.length) return "";
       const keywords = extractSearchKeywords(question || "");
@@ -1711,8 +1805,17 @@
             .join("") +
           `</div>`
         : "";
-      const cards = articles
-        .map((a) => {
+
+      // 위계 순 정렬: 법률 → 시행령 → 시행규칙 → 지침 → 별표
+      const sorted = articles
+        .map((a, i) => ({ a, i, tier: lawTierOf(a.law_name, a.article_no) }))
+        .sort((x, y) => {
+          if (x.tier.order !== y.tier.order) return x.tier.order - y.tier.order;
+          return x.i - y.i;
+        });
+
+      const cards = sorted
+        .map(({ a, tier }) => {
           const art = String(a.article_no || "").replace(/\s/g, "");
           const isByeol = art.startsWith("별표") || art.startsWith("별지");
           let citeLabel = "";
@@ -1747,15 +1850,19 @@
               (intro
                 ? `<div class="byeol-prose">${lawTextHtml(intro, keywords)}</div>`
                 : "");
-          } else {
-            // PDF 없을 때만 텍스트 (표 HTML 변환 없이 산문만)
+          } else if (isByeol) {
             bdInner = formatByeolProseOnly(body, title, keywords);
+          } else {
+            bdInner = lawBodyHtml(body, title, keywords, false);
           }
           return (
-            `<div class="law-card" data-art="${esc(art)}" data-law="${esc(normalizeLawKey(a.law_name || ""))}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
+            `<div class="law-card ${tier.cls}" data-art="${esc(art)}" data-law="${esc(normalizeLawKey(a.law_name || ""))}" data-tier="${esc(tier.key)}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
             `<div class="law-top">` +
             `<div class="law-top-text">` +
-            `<div class="law-hd-title">[${highlightKeywords(citeLabel, keywords)}]</div>` +
+            `<div class="law-hd-title">` +
+            `<span class="law-tier-badge">${esc(tier.label)}</span>` +
+            `[${highlightKeywords(citeLabel, keywords)}]` +
+            `</div>` +
             (title
               ? `<div class="law-hd-sub">${highlightKeywords(title, keywords)}</div>`
               : "") +
@@ -1772,6 +1879,21 @@
           );
         })
         .join("");
+
+      const tiersUsed = new Set(sorted.map((x) => x.tier.key));
+      const legendParts = [];
+      if (tiersUsed.has("act"))
+        legendParts.push(`<span><i class="lg-act"></i>법률</span>`);
+      if (tiersUsed.has("decree"))
+        legendParts.push(`<span><i class="lg-decree"></i>시행령</span>`);
+      if (tiersUsed.has("rule"))
+        legendParts.push(`<span><i class="lg-rule"></i>시행규칙</span>`);
+      if (tiersUsed.has("schedule"))
+        legendParts.push(`<span><i class="lg-schedule"></i>별표·서식</span>`);
+      const legend = legendParts.length
+        ? `<div class="law-tier-legend" aria-label="법령 위계">${legendParts.join("")}<span style="opacity:.75">← 상위 · 하위 →</span></div>`
+        : "";
+
       const nByeol = articles.filter((a) =>
         String(a.article_no || "").startsWith("별표") ||
         String(a.article_no || "").startsWith("별지")
@@ -1785,7 +1907,8 @@
       return (
         `<div class="law-section">` +
         `<div class="law-section-title">${secTitle}</div>` +
-        `<p class="law-section-hint">노란 형광 = 질문 키워드 · 칩 클릭 시 다음 위치 · ▼ 전문 · ${articles.length}건</p>` +
+        `<p class="law-section-hint">위계: 법률 → 시행령 → 시행규칙 → 별표 · 노란 형광 = 검색어 · ${articles.length}건</p>` +
+        legend +
         chipBar +
         cards +
         `</div>`
