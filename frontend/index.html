@@ -746,44 +746,50 @@
       overflow-wrap: anywhere;
     }
     .byeol-prose:last-child { margin-bottom: 0; }
-    /* 별표 원본 이미지·PDF (법제처 첨부) */
-    .byeol-media {
-      margin: 4px 0 10px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff;
-      overflow: auto;
-      max-height: min(70vh, 720px);
-      -webkit-overflow-scrolling: touch;
+    /* 별표: 인라인 이미지 잘림 방지 → PDF 새 창 유도 */
+    .byeol-open-panel {
+      margin: 2px 0 8px;
+      padding: 12px 12px 10px;
+      border-radius: 12px;
+      border: 1px solid #bfdbfe;
+      background: linear-gradient(180deg, #f8fbff, #eff6ff);
     }
-    .byeol-media img {
-      display: block;
-      width: 100%;
-      height: auto;
-      min-width: 280px;
+    .byeol-open-hint {
+      margin: 0 0 10px;
+      font-size: 0.8rem;
+      color: #475569;
+      line-height: 1.45;
     }
     .byeol-files {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin: 0 0 10px;
+      margin: 0;
     }
     .byeol-files a {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      padding: 7px 12px;
-      border-radius: 10px;
-      border: 1px solid #bfdbfe;
-      background: #eff6ff;
+      gap: 6px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid #93c5fd;
+      background: #fff;
       color: #1d4ed8;
-      font-size: 0.8rem;
-      font-weight: 650;
+      font-size: 0.86rem;
+      font-weight: 700;
       text-decoration: none;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
     }
+    .byeol-files a.byeol-pdf-main {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+    .byeol-files a.byeol-pdf-main:hover { background: #1d4ed8; }
     .byeol-files a:hover { background: #dbeafe; }
+    .byeol-files a.byeol-pdf-main:hover { background: #1d4ed8; color: #fff; }
     .byeol-text-details {
-      margin: 4px 0 0;
+      margin: 10px 0 0;
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 8px 10px;
@@ -1154,11 +1160,19 @@
 
     function setLawCardOpen(card, open) {
       if (!card) return;
+      const wasOpen = card.classList.contains("open");
       card.classList.toggle("open", !!open);
       const act = card.querySelector(".law-hd-action");
       if (act) {
         act.textContent = open ? "▲ 접기" : "▼ 전문";
         act.setAttribute("aria-expanded", open ? "true" : "false");
+      }
+      // 별표: 펼칠 때 PDF를 새 창으로 (카드 안 표 잘림 방지)
+      if (open && !wasOpen) {
+        const pdf = (card.getAttribute("data-pdf") || "").trim();
+        if (pdf) {
+          window.open(pdf, "_blank", "noopener,noreferrer");
+        }
       }
     }
 
@@ -1629,37 +1643,35 @@
           const title = a.title || "";
           const body = a.body || "";
           const sum = lawSummary(body, isByeol ? 220 : 180, question || "");
-          const imgUrl = (a.image_url || "").trim();
           const pdfUrl = (a.pdf_url || "").trim();
           const hwpUrl = (a.hwp_url || "").trim();
-          const hasMedia = isByeol && (imgUrl || pdfUrl || hwpUrl);
-          // 별표: 원본 이미지/PDF 우선 (박스문자 표 파싱 대신)
+          const hasMedia = isByeol && (pdfUrl || hwpUrl || (a.image_url || "").trim());
+          // 별표: 카드 안 이미지 잘림 → PDF 새 창이 정본
           let bdInner = "";
           if (hasMedia) {
             const files =
+              `<div class="byeol-open-panel">` +
+              `<p class="byeol-open-hint">표가 길어서 카드 안에서는 잘립니다. <strong>PDF를 새 창</strong>에서 보는 것이 정확합니다.</p>` +
               `<div class="byeol-files">` +
               (pdfUrl
-                ? `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 별표 PDF</a>`
+                ? `<a class="byeol-pdf-main" href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 별표 PDF 새 창</a>`
                 : "") +
               (hwpUrl
                 ? `<a href="${esc(hwpUrl)}" target="_blank" rel="noopener">한글 HWP</a>`
                 : "") +
-              `</div>`;
-            const img = imgUrl
-              ? `<div class="byeol-media"><img src="${esc(imgUrl)}" alt="${esc(citeLabel)}" loading="lazy" /></div>`
-              : "";
+              `</div></div>`;
             const textBlock =
               body
-                ? `<details class="byeol-text-details"><summary>텍스트 원문 (참고 · 표는 위 이미지·PDF 권장)</summary>` +
+                ? `<details class="byeol-text-details"><summary>텍스트 원문 (참고 · 표 레이아웃은 PDF 권장)</summary>` +
                   lawBodyHtml(body, title, keywords, true) +
                   `</details>`
                 : "";
-            bdInner = files + img + textBlock;
+            bdInner = files + textBlock;
           } else {
             bdInner = lawBodyHtml(body, title, keywords, isByeol);
           }
           return (
-            `<div class="law-card" data-art="${esc(art)}">` +
+            `<div class="law-card" data-art="${esc(art)}"${pdfUrl ? ` data-pdf="${esc(pdfUrl)}"` : ""}>` +
             `<div class="law-top">` +
             `<div class="law-top-text">` +
             `<div class="law-hd-title">[${highlightKeywords(citeLabel, keywords)}]</div>` +
@@ -1672,7 +1684,7 @@
             (sum && !hasMedia
               ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`
               : hasMedia
-                ? `<div class="law-sum"><span class="law-sum-label">별표</span>${highlightKeywords(title || citeLabel, keywords)} · ▼ 전문에서 표 이미지·PDF</div>`
+                ? `<div class="law-sum"><span class="law-sum-label">별표</span>${highlightKeywords(title || citeLabel, keywords)} · ▼ 전문 → PDF 새 창</div>`
                 : "") +
             `<div class="law-bd">${bdInner}</div>` +
             `</div>`
