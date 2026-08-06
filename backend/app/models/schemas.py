@@ -37,6 +37,10 @@ class Article(BaseModel):
     body: str = ""
     mst: str | None = None
     source: Literal["law_api", "demo", "cache", "corpus"] = "law_api"
+    # 별표·서식: 법제처 flSeq 기반 (박스문자 표 대신 원본 이미지/PDF)
+    image_url: str = ""  # /api/law/attach?fl_seq=…
+    pdf_url: str = ""
+    hwp_url: str = ""
 
 
 class LawSearchHit(BaseModel):

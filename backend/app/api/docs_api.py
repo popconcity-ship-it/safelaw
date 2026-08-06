@@ -25,6 +25,54 @@ from ..security import require_admin
 router = APIRouter(prefix="/api", tags=["docs-kosha"])
 
 
+@router.get("/law/attach")
+async def law_attach(fl_seq: int = Query(..., ge=1, le=10_000_000_000)):
+    """법제처 별표·서식 첨부 프록시 (이미지/PDF/HWP).
+
+    브라우저에서 law.go.kr 직접 핫링크 시 깨지는 경우 대비.
+    박스문자 표 파싱 대신 원본 표 이미지·PDF를 보여 줄 때 사용.
+    """
+    import httpx
+    from fastapi.responses import Response
+
+    from ..config import get_settings
+
+    s = get_settings()
+    url = f"https://www.law.go.kr/LSW/flDownload.do?flSeq={fl_seq}"
+    headers = {
+        "User-Agent": s.law_user_agent,
+        "Referer": s.law_referer,
+        "Accept": "*/*",
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=60.0, follow_redirects=True, headers=headers
+        ) as client:
+            r = await client.get(url)
+    except Exception as e:
+        raise HTTPException(502, f"법제처 첨부 요청 실패: {e}") from e
+    if r.status_code >= 400 or not r.content:
+        raise HTTPException(404, f"첨부 없음 flSeq={fl_seq}")
+
+    ctype = (r.headers.get("content-type") or "application/octet-stream").split(";")[0]
+    # 법제처가 charset 을 붙이는 경우 정리
+    if ctype in ("application/hwp", "application/haansofthwp"):
+        ctype = "application/x-hwp"
+    disp = r.headers.get("content-disposition") or ""
+    headers_out = {
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if disp:
+        headers_out["Content-Disposition"] = disp
+    elif "pdf" in ctype:
+        headers_out["Content-Disposition"] = f'inline; filename="byeol_{fl_seq}.pdf"'
+    elif "image" in ctype:
+        headers_out["Content-Disposition"] = f'inline; filename="byeol_{fl_seq}.gif"'
+
+    return Response(content=r.content, media_type=ctype, headers=headers_out)
+
+
 def _safe_code(name: str) -> str:
     """파일명/지침번호를 안전한 code 로 정규화."""
     s = (name or "").strip()

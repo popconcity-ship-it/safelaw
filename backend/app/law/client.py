@@ -16,7 +16,7 @@ from cachetools import TTLCache
 
 from ..config import Settings, get_settings
 from ..models.schemas import Article, LawSearchHit
-from .corpus import get_corpus_article, search_corpus
+from .corpus import article_from_row, get_corpus_article, search_corpus
 from .safety_laws import (
     demo_get_article,
     demo_search,
@@ -315,16 +315,7 @@ class LawClient:
             for law_name in candidates:
                 hit = get_corpus_article(law_name, art)
                 if hit:
-                    _append(
-                        Article(
-                            law_name=hit["law_name"],
-                            article_no=str(hit["article_no"]),
-                            title=hit.get("title") or "",
-                            body=hit.get("body") or "",
-                            mst=hit.get("mst"),
-                            source="corpus",
-                        )
-                    )
+                    _append(article_from_row(hit))
                     break
             if len(articles) >= limit:
                 return articles[:limit]
@@ -348,16 +339,7 @@ class LawClient:
                             cached = hit
                             break
             if cached:
-                _append(
-                    Article(
-                        law_name=cached["law_name"],
-                        article_no=str(cached["article_no"]),
-                        title=cached.get("title") or "",
-                        body=cached.get("body") or "",
-                        mst=cached.get("mst"),
-                        source="corpus",
-                    )
-                )
+                _append(article_from_row(cached))
             else:
                 # 코퍼스에 없을 때만 법제처 (느림)
                 if len(law_hint) < 2:
@@ -371,16 +353,7 @@ class LawClient:
         # 2) 로컬 코퍼스 전문검색 — 본문 그대로 사용 (법제처 재조회는 느림 → 생략)
         corpus_hits = search_corpus(expanded, limit=max(limit, 6))
         for hit in corpus_hits:
-            _append(
-                Article(
-                    law_name=hit["law_name"],
-                    article_no=str(hit["article_no"]),
-                    title=hit.get("title") or "",
-                    body=hit.get("body") or "",
-                    mst=hit.get("mst"),
-                    source="corpus",
-                )
-            )
+            _append(article_from_row(hit))
             if len(articles) >= limit:
                 break
 
@@ -397,16 +370,7 @@ class LawClient:
                         cached = hit
                         break
             if cached:
-                _append(
-                    Article(
-                        law_name=cached["law_name"],
-                        article_no=str(cached["article_no"]),
-                        title=cached.get("title") or "",
-                        body=cached.get("body") or "",
-                        mst=cached.get("mst"),
-                        source="corpus",
-                    )
-                )
+                _append(article_from_row(cached))
             else:
                 _append(await self.get_article(law, art))
             if len(articles) >= limit:

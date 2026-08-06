@@ -746,6 +746,57 @@
       overflow-wrap: anywhere;
     }
     .byeol-prose:last-child { margin-bottom: 0; }
+    /* 별표 원본 이미지·PDF (법제처 첨부) */
+    .byeol-media {
+      margin: 4px 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      overflow: auto;
+      max-height: min(70vh, 720px);
+      -webkit-overflow-scrolling: touch;
+    }
+    .byeol-media img {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-width: 280px;
+    }
+    .byeol-files {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+    .byeol-files a {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 7px 12px;
+      border-radius: 10px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 0.8rem;
+      font-weight: 650;
+      text-decoration: none;
+    }
+    .byeol-files a:hover { background: #dbeafe; }
+    .byeol-text-details {
+      margin: 4px 0 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #f8fafc;
+    }
+    .byeol-text-details > summary {
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 650;
+      color: #64748b;
+      user-select: none;
+    }
+    .byeol-text-details[open] > summary { margin-bottom: 8px; }
     .doc-bar {
       display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
     }
@@ -1578,6 +1629,35 @@
           const title = a.title || "";
           const body = a.body || "";
           const sum = lawSummary(body, isByeol ? 220 : 180, question || "");
+          const imgUrl = (a.image_url || "").trim();
+          const pdfUrl = (a.pdf_url || "").trim();
+          const hwpUrl = (a.hwp_url || "").trim();
+          const hasMedia = isByeol && (imgUrl || pdfUrl || hwpUrl);
+          // 별표: 원본 이미지/PDF 우선 (박스문자 표 파싱 대신)
+          let bdInner = "";
+          if (hasMedia) {
+            const files =
+              `<div class="byeol-files">` +
+              (pdfUrl
+                ? `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 별표 PDF</a>`
+                : "") +
+              (hwpUrl
+                ? `<a href="${esc(hwpUrl)}" target="_blank" rel="noopener">한글 HWP</a>`
+                : "") +
+              `</div>`;
+            const img = imgUrl
+              ? `<div class="byeol-media"><img src="${esc(imgUrl)}" alt="${esc(citeLabel)}" loading="lazy" /></div>`
+              : "";
+            const textBlock =
+              body
+                ? `<details class="byeol-text-details"><summary>텍스트 원문 (참고 · 표는 위 이미지·PDF 권장)</summary>` +
+                  lawBodyHtml(body, title, keywords, true) +
+                  `</details>`
+                : "";
+            bdInner = files + img + textBlock;
+          } else {
+            bdInner = lawBodyHtml(body, title, keywords, isByeol);
+          }
           return (
             `<div class="law-card" data-art="${esc(art)}">` +
             `<div class="law-top">` +
@@ -1589,10 +1669,12 @@
             `</div>` +
             `<button type="button" class="law-hd-action" aria-expanded="false">▼ 전문</button>` +
             `</div>` +
-            (sum
+            (sum && !hasMedia
               ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`
-              : "") +
-            `<div class="law-bd">${lawBodyHtml(body, title, keywords, isByeol)}</div>` +
+              : hasMedia
+                ? `<div class="law-sum"><span class="law-sum-label">별표</span>${highlightKeywords(title || citeLabel, keywords)} · ▼ 전문에서 표 이미지·PDF</div>`
+                : "") +
+            `<div class="law-bd">${bdInner}</div>` +
             `</div>`
           );
         })

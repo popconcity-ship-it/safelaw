@@ -145,6 +145,23 @@ def reload_corpus() -> int:
     return len(load_corpus())
 
 
+def article_from_row(row: dict, *, source: str = "corpus"):
+    """corpus 행 → Article (별표 이미지/PDF 필드 포함)."""
+    from ..models.schemas import Article
+
+    return Article(
+        law_name=row.get("law_name") or "",
+        article_no=str(row.get("article_no") or ""),
+        title=row.get("title") or "",
+        body=row.get("body") or "",
+        mst=row.get("mst"),
+        source=source,  # type: ignore[arg-type]
+        image_url=row.get("image_url") or "",
+        pdf_url=row.get("pdf_url") or "",
+        hwp_url=row.get("hwp_url") or "",
+    )
+
+
 def normalize_article_key(article_no: str) -> str:
     """제N조 / 별표 N / 별지 N → 코퍼스 키 (별표1, 36, 36의2)."""
     art = str(article_no or "").strip()

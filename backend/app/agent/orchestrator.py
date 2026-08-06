@@ -227,7 +227,11 @@ class Orchestrator:
 
         네트워크(법제처) 없이 로컬 코퍼스만. 최대 6건.
         """
-        from ..law.corpus import get_corpus_article, normalize_article_key
+        from ..law.corpus import (
+            article_from_row,
+            get_corpus_article,
+            normalize_article_key,
+        )
 
         extracted = extract_citations(answer or "")
         if not extracted:
@@ -251,7 +255,9 @@ class Orchestrator:
                 continue
             art_k = normalize_article_key(art)
             key = (self._norm_law(law), art_k)
-            if key in seen or any(normalize_article_key(str(a.article_no)) == art_k for a in out):
+            if key in seen or any(
+                normalize_article_key(str(a.article_no)) == art_k for a in out
+            ):
                 continue
 
             hit = get_corpus_article(law, art)
@@ -270,14 +276,7 @@ class Orchestrator:
             if not hit:
                 continue
 
-            a = Article(
-                law_name=hit["law_name"],
-                article_no=str(hit["article_no"]),
-                title=hit.get("title") or "",
-                body=hit.get("body") or "",
-                mst=hit.get("mst"),
-                source="corpus",
-            )
+            a = article_from_row(hit)
             seen.add((self._norm_law(a.law_name), normalize_article_key(a.article_no)))
             enriched_front.append(a)
             out.append(a)
@@ -289,7 +288,6 @@ class Orchestrator:
 
         # 인용된 조문을 카드 앞쪽에 (클릭 시 바로 보임)
         rest = [a for a in out if a not in enriched_front]
-        # 인용 순서 우선 + 기존 검색 조문
         ordered: list[Article] = []
         for a in enriched_front + rest:
             k = (self._norm_law(a.law_name), normalize_article_key(str(a.article_no)))
@@ -304,11 +302,10 @@ class Orchestrator:
 
     def _enrich_byeol_from_articles(self, articles: list[Article]) -> list[Article]:
         """조문 본문의 「별표 N」 언급 → 별표 카드 자동 추가."""
-        from ..law.corpus import get_corpus_article, normalize_article_key
+        from ..law.corpus import article_from_row, get_corpus_article, normalize_article_key
 
         out = list(articles)
         seen = {normalize_article_key(str(a.article_no)) for a in out}
-        # 별표|35 · 별표 35 · 별표35
         pat = re.compile(r"별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?")
 
         for a in list(articles):
@@ -330,16 +327,7 @@ class Orchestrator:
                 if not hit:
                     continue
                 seen.add(art)
-                out.append(
-                    Article(
-                        law_name=hit["law_name"],
-                        article_no=str(hit["article_no"]),
-                        title=hit.get("title") or "",
-                        body=hit.get("body") or "",
-                        mst=hit.get("mst"),
-                        source="corpus",
-                    )
-                )
+                out.append(article_from_row(hit))
                 if len(out) >= 8:
                     return out
         return out

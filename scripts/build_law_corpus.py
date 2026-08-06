@@ -87,14 +87,19 @@ def _parse_byeol_units(root: ET.Element, law_name: str, mst: str) -> list[dict]:
         branch = _t("별표가지번호")
         title = _t("별표제목")
         body = _clean_byeol_body(_text_of(kids.get("별표내용")))
-        # 원문 다운로드 링크 (법제처)
-        flink = ""
-        for k, el in kids.items():
-            if "링크" in k and el is not None and (el.text or "").strip():
-                flink = (el.text or "").strip()
-                break
-        if flink and not flink.startswith("http"):
-            flink = "https://www.law.go.kr" + flink
+
+        def _fl_seq(link: str) -> str:
+            m = re.search(r"flSeq=(\d+)", link or "")
+            return m.group(1) if m else ""
+
+        # 법제처 첨부: 이미지(표 원본) · PDF · HWP — 박스문자 파싱 대신 원본 사용
+        img_fl = _fl_seq(_t("별표서식이미지파일링크"))
+        pdf_fl = _fl_seq(_t("별표서식PDF파일링크"))
+        hwp_fl = _fl_seq(_t("별표서식파일링크"))
+        # 앱 프록시 경로 (CORS·핫링크 회피)
+        image_url = f"/api/law/attach?fl_seq={img_fl}" if img_fl else ""
+        pdf_url = f"/api/law/attach?fl_seq={pdf_fl}" if pdf_fl else ""
+        hwp_url = f"/api/law/attach?fl_seq={hwp_fl}" if hwp_fl else ""
 
         if kind in ("서식", "별지서식") or "서식" in kind:
             art = f"별지{no}"
@@ -108,10 +113,8 @@ def _parse_byeol_units(root: ET.Element, law_name: str, mst: str) -> list[dict]:
                     art = f"별표{no}의{branch}"
             label = f"별표 {no}"
 
-        if len(body) < 8 and not title:
+        if len(body) < 8 and not title and not (image_url or pdf_url):
             continue
-        if flink:
-            body = (body + f"\n\n[법제처 원문 파일]({flink})").strip()
 
         rows.append(
             {
@@ -121,6 +124,12 @@ def _parse_byeol_units(root: ET.Element, law_name: str, mst: str) -> list[dict]:
                 "title": title or label,
                 "body": body,
                 "kind": "byeol",
+                "image_url": image_url,
+                "pdf_url": pdf_url,
+                "hwp_url": hwp_url,
+                "image_fl": img_fl,
+                "pdf_fl": pdf_fl,
+                "hwp_fl": hwp_fl,
             }
         )
     return rows
