@@ -28,6 +28,9 @@ ITEM_RE = re.compile(
     r"(?P<label>(?:[가-힣]{1,3}|[가나다라마바사아자차카타파하])\.\s*법\s*제\s*(?P<art>\d+)\s*조)"
 )
 ART_RE = re.compile(r"제\s*(\d+)\s*조")
+# 고시(열사용기자재 등): 제N편 · 22.1.1 절 번호
+NOTICE_PYEON_RE = re.compile(r"제\s*(\d+)\s*편(?:\s+(\S[^\n]{0,48}))?")
+NOTICE_SEC_RE = re.compile(r"(?m)^\s*(\d+\.\d+(?:\.\d+)?)\s+(\S[^\n]{0,48})")
 
 
 def fl_seq_of(row: dict) -> int | None:
@@ -42,27 +45,37 @@ def fl_seq_of(row: dict) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def collect_targets(only: str | None) -> list[dict]:
+def collect_targets(only: str | None, *, notices: bool = False) -> list[dict]:
     seen: set[tuple] = set()
     out: list[dict] = []
     for line in CORPUS.open(encoding="utf-8"):
         o = json.loads(line)
         art = str(o.get("article_no") or "")
-        if not art.startswith("별표"):
-            continue
-        if only and only not in art and only not in (o.get("law_name") or ""):
+        law = o.get("law_name") or ""
+        is_byeol = art.startswith("별표")
+        is_notice = art == "개요" or art.endswith("편") or "검사 및 검사면제" in law
+        if notices:
+            if not is_notice:
+                continue
+        else:
+            if not is_byeol:
+                continue
+        if only and only not in art and only not in law and only not in str(
+            o.get("pdf_fl") or ""
+        ):
             continue
         fl = fl_seq_of(o)
         if not fl:
             continue
-        key = (o.get("law_name"), art, fl)
+        # 고시는 fl 당 1건 (편마다 중복 방지)
+        key = (fl,) if notices else (law, art, fl)
         if key in seen:
             continue
         seen.add(key)
         out.append(
             {
-                "law_name": o.get("law_name") or "",
-                "article_no": art,
+                "law_name": law,
+                "article_no": art if not notices else "고시",
                 "title": o.get("title") or "",
                 "fl_seq": fl,
             }
@@ -127,6 +140,30 @@ def index_pages(pages: list[str]) -> dict:
             art = m.group(1)
             if art not in by_article:
                 by_article[art] = i
+
+        # 고시 편·절 (열사용기자재 검사 기준 등) — 별표 PDF에도 무해
+        for m in NOTICE_PYEON_RE.finditer(page):
+            raw = re.sub(r"\s+", " ", m.group(0)).strip()
+            if len(raw) > 72 or "에서" in raw or "따른다" in raw:
+                continue
+            n = m.group(1)
+            for lab in (f"제{n}편", f"{n}편", raw[:40]):
+                if lab and lab not in by_label:
+                    by_label[lab] = i
+                    anchors.append({"page": i, "label": lab, "article": f"{n}편"})
+        for m in NOTICE_SEC_RE.finditer(page):
+            sec = m.group(1)
+            title = (m.group(2) or "").strip()
+            if sec not in by_label:
+                by_label[sec] = i
+            full = f"{sec} {title}".strip()[:48]
+            if full and full not in by_label:
+                by_label[full] = i
+            # 상위 절 22.1.1 → 22.1 도 없으면 기록
+            if sec.count(".") >= 2:
+                parent = ".".join(sec.split(".")[:2])
+                if parent not in by_label:
+                    by_label[parent] = i
 
     return {
         "pages": len(pages),
@@ -206,12 +243,13 @@ def build_index(
     limit: int = 0,
     out_path: Path = OUT,
     merge: bool = False,
+    notices: bool = False,
 ) -> int:
-    """코퍼스 기준 별표 PDF 페이지 인덱스 생성. 성공 건수 반환."""
-    targets = collect_targets(only or None)
+    """코퍼스 기준 별표·고시 PDF 페이지 인덱스 생성. 성공 건수 반환."""
+    targets = collect_targets(only or None, notices=notices)
     if limit:
         targets = targets[:limit]
-    print(f"targets: {len(targets)}")
+    print(f"targets: {len(targets)} (notices={notices})")
 
     existing = load_index(out_path) if merge else {"version": 1, "count": 0, "by_fl_seq": {}}
     by_fl: dict[str, dict] = dict(existing.get("by_fl_seq") or {}) if merge else {}
@@ -257,6 +295,11 @@ def main() -> int:
         default=0,
         help="단일 fl_seq 만 인덱싱 후 병합 저장",
     )
+    ap.add_argument(
+        "--notices",
+        action="store_true",
+        help="고시(편) PDF만 대상 (merge 권장)",
+    )
     args = ap.parse_args()
 
     if args.fl_seq:
@@ -267,9 +310,15 @@ def main() -> int:
         data = merge_entry(load_index(), entry)
         save_index(data)
         print(f"merged fl_seq={args.fl_seq} pages={entry['pages']}")
+        print("sample labels:", list(entry.get("by_label", {}).items())[:8])
         return 0
 
-    n = build_index(only=args.only, limit=args.limit, merge=args.merge)
+    n = build_index(
+        only=args.only,
+        limit=args.limit,
+        merge=args.merge,
+        notices=args.notices,
+    )
     return 0 if n else 1
 
 

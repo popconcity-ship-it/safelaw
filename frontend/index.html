@@ -2646,7 +2646,7 @@
       }
     }
 
-    /** 비동기: fine-box 에 페이지 점프 버튼 보강 */
+    /** 비동기: fine-box / notice-find 에 페이지 점프 버튼 보강 */
     async function hydrateFineBoxPages(root) {
       const boxes = (root || messagesEl).querySelectorAll(".fine-find[data-pdf]");
       for (const box of boxes) {
@@ -2654,6 +2654,7 @@
         const pdf = box.getAttribute("data-pdf") || "";
         const fl = flSeqFromPdfUrl(pdf);
         const entry = await ensureByeolPageEntry(fl);
+        const isNotice = box.getAttribute("data-kind") === "notice" || box.classList.contains("notice-find");
         const fineMeta = {
           searchKeys: (box.getAttribute("data-search-keys") || "")
             .split("||")
@@ -2661,17 +2662,24 @@
           duty: box.getAttribute("data-duty") || "",
           itemKey: box.getAttribute("data-item-key") || "",
         };
-        const page = resolveByeolPage(entry, fineMeta);
+        const page = isNotice
+          ? resolveNoticePage(entry, fineMeta.searchKeys)
+          : resolveByeolPage(entry, fineMeta);
         box.setAttribute("data-page-ready", "1");
         if (!page) continue;
         box.setAttribute("data-page", String(page));
         const total = entry && entry.pages ? entry.pages : "";
         const tip = box.querySelector(".fine-find-tip");
         if (tip) {
+          const near = isNotice
+            ? esc(fineMeta.searchKeys[0] || "")
+            : esc(fineMeta.itemKey || "");
           tip.innerHTML =
             `<strong>PDF ${page}쪽</strong>` +
             (total ? ` / 전체 ${total}쪽` : "") +
-            ` · 항 표지 <strong>${esc(fineMeta.itemKey || "")}</strong> 근처` +
+            (near
+              ? ` · ${isNotice ? "절" : "항 표지"} <strong>${near}</strong> 근처`
+              : "") +
             ` · 그래도 안 보이면 Ctrl+F / ⌘F 로 검색어 붙여넣기`;
         }
         const actions = box.querySelector(".fine-find-actions");
@@ -2769,8 +2777,59 @@
       return { chunks: picked, terms: terms.slice(0, 6) };
     }
 
-    function renderNoticeBox(notice, pdfUrl) {
+    /** 고시 발췌 청크 → PDF 검색·페이지 키 (22.1.1, 제3편 …) */
+    function noticeSearchKeys(chunks, artNo) {
+      const keys = [];
+      const add = (k) => {
+        k = String(k || "").trim();
+        if (k && !keys.includes(k)) keys.push(k);
+      };
+      for (const ch of chunks || []) {
+        const m = String(ch).match(/(\d+\.\d+(?:\.\d+)?)/);
+        if (m) {
+          add(m[1]);
+          const parts = m[1].split(".");
+          if (parts.length >= 2) add(parts.slice(0, 2).join("."));
+          // "22.1.1 옥내설치" 전체 한 줄
+          const line = String(ch).match(
+            new RegExp(m[1].replace(/\./g, "\\.") + "\\s+\\S[^\\n]{0,40}")
+          );
+          if (line) add(line[0].replace(/\s+/g, " ").trim().slice(0, 48));
+        }
+        const py = String(ch).match(/제\s*(\d+)\s*편/);
+        if (py) {
+          add(`제${py[1]}편`);
+          add(`${py[1]}편`);
+        }
+      }
+      const art = String(artNo || "");
+      if (/^\d+편$/.test(art)) {
+        add(art);
+        add(`제${art}`);
+      } else if (art === "개요") {
+        add("제1편");
+        add("1편");
+      }
+      return keys.slice(0, 8);
+    }
+
+    function resolveNoticePage(entry, keys) {
+      if (!entry || !keys || !keys.length) return null;
+      const byLabel = entry.by_label || {};
+      for (const k of keys) {
+        if (byLabel[k]) return byLabel[k];
+      }
+      for (const k of keys) {
+        for (const [lab, pg] of Object.entries(byLabel)) {
+          if (lab === k || lab.startsWith(k + " ") || k.startsWith(lab)) return pg;
+        }
+      }
+      return null;
+    }
+
+    function renderNoticeBox(notice, pdfUrl, artNo) {
       if (!notice || !notice.chunks || !notice.chunks.length) return "";
+      const keys = noticeSearchKeys(notice.chunks, artNo);
       let html =
         `<div class="notice-box">` +
         `<div class="notice-box-hd">고시 관련 발췌` +
@@ -2781,12 +2840,29 @@
       for (const ch of notice.chunks) {
         html += `<div class="notice-chunk">${lawTextHtml(ch, notice.terms || [])}</div>`;
       }
-      if (pdfUrl) {
+      // 별표 fine-find 와 동일: 페이지 인덱스 → #page=N 점프
+      if (pdfUrl || keys.length) {
+        const keyBtns = keys
+          .map(
+            (k) =>
+              `<button type="button" class="fine-copy-key" data-copy="${esc(k)}" title="검색어 복사">📋 ${esc(k)}</button>`
+          )
+          .join("");
+        const primary = keys[0] || "";
         html +=
-          `<div style="margin-top:8px;font-size:0.8rem">` +
-          `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 고시 PDF 정본</a>` +
-          ` · 수치·표는 원본 확인` +
-          `</div>`;
+          `<div class="fine-find notice-find" data-pdf="${esc(pdfUrl || "")}"` +
+          ` data-search-keys="${esc(keys.join("||"))}"` +
+          ` data-primary-key="${esc(primary)}"` +
+          ` data-kind="notice">` +
+          `<div class="fine-find-hd">PDF 원본에서 이 절 열기</div>` +
+          `<div class="fine-find-tip">페이지 인덱스를 불러오는 중… 또는 검색어 복사 후 Ctrl+F / ⌘F</div>` +
+          (keyBtns ? `<div class="fine-find-keys">${keyBtns}</div>` : "") +
+          `<div class="fine-find-actions">` +
+          (pdfUrl
+            ? `<button type="button" class="primary fine-open-pdf-find">PDF 열기 + 검색어 복사</button>` +
+              `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">PDF 처음부터</a>`
+            : "") +
+          `</div></div>`;
       }
       html += `</div>`;
       return html;
@@ -2963,7 +3039,7 @@
               ? extractNoticeHighlights(body, q, 3)
               : null;
           const noticeHtml = noticeHit
-            ? renderNoticeBox(noticeHit, pdfUrl)
+            ? renderNoticeBox(noticeHit, pdfUrl, art)
             : "";
           // 별표 표 HTML 자동 변환은 셀 병합·금액 열 오류가 잦음 → PDF 정본
           let bdInner = "";
@@ -3760,7 +3836,10 @@
         const box = openFind.closest(".fine-find");
         if (!box) return;
         const pdf = (box.getAttribute("data-pdf") || "").trim();
-        const key = (box.getAttribute("data-primary-key") || "").trim();
+        let key = (box.getAttribute("data-primary-key") || "").trim();
+        if (!key) {
+          key = (box.getAttribute("data-search-keys") || "").split("||")[0] || "";
+        }
         const page = box.getAttribute("data-page") || openFind.getAttribute("data-page") || "";
         const toast = box.querySelector(".fine-find-toast");
         const openUrl = pdfUrlWithPage(pdf, page);
