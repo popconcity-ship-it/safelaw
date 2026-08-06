@@ -177,6 +177,7 @@ class Orchestrator:
             if grounded and (
                 domain.grounded_only
                 or (domain.id == "energy_thermal" and not domain.prefer_criminal)
+                or domain.id == "safety_education"
             ):
                 intent = f"domain:{domain.id}"
                 answer = grounded

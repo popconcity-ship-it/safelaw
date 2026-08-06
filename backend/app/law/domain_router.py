@@ -75,6 +75,38 @@ _DOMAIN_RULES: list[tuple[tuple[str, ...], Domain]] = [
             exclude_forms=True,
         ),
     ),
+    # 근로자 안전보건교육 — 법 29 + 시행규칙(고용노동부령) 26·별표4·5
+    # ⛔ "해야" 토큰이 시행령 70·71(방호·대여 기계) 제목과 오매칭되지 않게 스코프 고정
+    (
+        (
+            "안전보건교육",
+            "안전교육",
+            "보건교육",
+            "근로자 교육",
+            "정기교육",
+            "채용 시 교육",
+            "채용시 교육",
+            "특별교육",
+            "작업내용 변경",
+            "교육시간",
+            "교육 언제",
+        ),
+        Domain(
+            id="safety_education",
+            law_allow=("산업안전보건",),
+            law_deny=("에너지이용", "열사용기자재", "중대재해"),
+            seed_articles=(
+                ("산업안전보건법", "29"),
+                ("산업안전보건법 시행규칙", "26"),
+                ("산업안전보건법 시행규칙", "별표4"),
+                ("산업안전보건법 시행규칙", "별표5"),
+                ("산업안전보건법 시행규칙", "27"),
+            ),
+            skip_kosha=True,
+            exclude_forms=True,
+            grounded_only=True,
+        ),
+    ),
     (
         ("산업안전지도사", "산업보건지도사", "지도사"),
         Domain(
@@ -245,6 +277,29 @@ def filter_articles_by_domain(articles: list, domain: Domain) -> list:
             and (art in ("73", "75") or title.strip() == "벌칙")
         ):
             continue
+        # 교육 도메인: 방호·대여 기계(70·71·별표20·21) 등 오매칭 제외
+        if domain.id == "safety_education":
+            if art in ("70", "71") and "시행령" in law:
+                continue
+            if art in ("별표20", "별표21") and "시행령" in law:
+                continue
+            if "방호" in title or "대여자" in title:
+                continue
+            # 교육과 무관한 시행규칙 조
+            if "시행규칙" in law and art not in (
+                "26",
+                "27",
+                "28",
+                "29",
+                "30",
+                "별표4",
+                "별표5",
+            ):
+                # 법률 29·30·31·32 는 허용, 규칙 중 교육 외 제외
+                if not art.startswith("별표"):
+                    body = getattr(a, "body", None) or ""
+                    if "교육" not in title and "교육" not in body[:60]:
+                        continue
         out.append(a)
     return out
 
@@ -261,6 +316,13 @@ def domain_prompt_hint(domain: Domain) -> str:
         return (
             "이 질문은 산업안전보건법 물질안전보건자료(MSDS) 영역입니다. "
             "제114조·제175조·시행령 별표35 과태료를 근거로 하세요."
+        )
+    if domain.id == "safety_education":
+        return (
+            "근로자 안전보건교육 질문입니다. "
+            "법 제29조의 「고용노동부령」= 산업안전보건법 시행규칙 "
+            "(교육시간·내용은 시행규칙 제26조·별표4·별표5). "
+            "시행령 제70·71조(방호·대여 기계)와 섞지 마세요."
         )
     if domain.prefer_criminal:
         return "형사 벌칙(징역·벌금) 조문을 우선하고, 과태료 차수 표와 섞지 마세요."

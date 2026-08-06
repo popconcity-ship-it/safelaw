@@ -212,6 +212,43 @@ def build_grounded_answer(
                 + "\n\n※ 수치·표는 고시 PDF 정본 확인 · 참고용"
             )
 
+    # 안전보건교육 시기·고용노동부령
+    if domain.id == "safety_education":
+        has_29 = any(str(a.article_no) == "29" and "산업안전보건법" == (a.law_name or "") for a in articles)
+        has_26 = any(
+            str(a.article_no) == "26" and "시행규칙" in (a.law_name or "") for a in articles
+        )
+        lines = [
+            "**사업주는 소속 근로자에게 안전보건교육을 실시해야 합니다.**",
+            "",
+            "### 언제 (법 제29조)",
+            "- **정기교육**: 소속 근로자에게 **정기적으로** ([산업안전보건법 제29조] 제1항)",
+            "- **채용 시·작업내용 변경 시**: 해당 작업에 필요한 교육 (같은 조 제2항)",
+            "- **유해·위험 작업**: 특별교육 (같은 조 제3항)",
+            "",
+            "### 「고용노동부령으로 정하는 바」란?",
+            "법 제29조의 **고용노동부령** = **산업안전보건법 시행규칙**입니다.",
+        ]
+        if has_26 or any("별표4" in str(a.article_no) for a in articles):
+            lines.extend(
+                [
+                    "- **교육시간**: [산업안전보건법 시행규칙 제26조] · [시행규칙 별표 4]",
+                    "- **교육내용**: 같은 조 · [시행규칙 별표 5]",
+                    "- 면제·감면: [산업안전보건법 시행규칙 제27조] 등",
+                ]
+            )
+        else:
+            lines.append(
+                "- 교육시간·내용은 시행규칙 제26조 및 별표 4·5를 확인하세요."
+            )
+        lines.extend(
+            [
+                "",
+                "※ 참고용 · 최종 판단은 전문가·관할 기관 확인",
+            ]
+        )
+        return "\n".join(lines)
+
     # 위험성평가 등 간단 의무
     if domain.id == "risk_assessment" and any(
         k in q for k in ("의무", "해야", "해당", "인가요", "인가", "하나요")

@@ -90,5 +90,15 @@
     "forbid_articles": ["114", "175"],
     "answer_must": ["설치"],
     "answer_forbid": ["1차 100"]
+  },
+  {
+    "id": "safety-education-when",
+    "q": "안전보건교육은 언제 해야 하나요?",
+    "domain": "safety_education",
+    "must_laws": ["산업안전보건법"],
+    "must_articles": ["29", "26"],
+    "forbid_articles": ["70", "71", "별표20", "별표21"],
+    "answer_must": ["정기", "시행규칙"],
+    "answer_forbid": ["방호조치"]
   }
 ]
