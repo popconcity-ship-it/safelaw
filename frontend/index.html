@@ -751,6 +751,38 @@
       color: #78716c;
       line-height: 1.4;
     }
+    .msg.bot .fine-box .fine-cite {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: flex-start;
+      margin: 0 0 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #fff7ed;
+      border: 1px dashed #fdba74;
+      font-size: 0.78rem;
+      color: #9a3412;
+      line-height: 1.45;
+    }
+    .msg.bot .fine-box .fine-cite strong {
+      color: #c2410c;
+      font-weight: 700;
+    }
+    .msg.bot .fine-box .fine-cite .fine-path {
+      font-weight: 650;
+      word-break: keep-all;
+    }
+    .msg.bot .fine-box .fine-cite .fine-viol {
+      flex: 1 1 100%;
+      color: #57534e;
+      font-size: 0.76rem;
+    }
+    .msg.bot .fine-box td.desc {
+      font-size: 0.8rem;
+      line-height: 1.4;
+      word-break: keep-all;
+    }
     .msg.bot .kosha-section {
       margin: 12px 0 6px;
     }
@@ -2111,9 +2143,9 @@
 
     /**
      * 별표 본문에서 질문 관련 과태료 행 발췌 → UI 표
-     * (LLM과 별도로 카드에 금액을 바로 보여 신뢰도↑)
+     * 출처(개별기준 항·조문)를 함께 반환해 어디를 인용했는지 표시
      */
-    function extractByeolFineTable(body, question) {
+    function extractByeolFineTable(body, question, artNo) {
       const q = String(question || "");
       if (!body || !q) return null;
       const terms = [];
@@ -2179,22 +2211,115 @@
       }
       if (bestPos < 0 || bestScore < 3) return null;
 
-      const chunk = flat.slice(Math.max(0, bestPos - 160), bestPos + 520);
+      // 항 시작(가./키./니. … 법 제N조)까지 앞쪽으로 확장
+      let chunkStart = Math.max(0, bestPos - 220);
+      const headSlice = flat.slice(chunkStart, bestPos + 20);
+      const headM = headSlice.match(
+        /([가-힣]{1,3}|[가나다라마바사아자차카타파하])\.\s*법\s*제\s*\d+조[\s\S]*$/
+      );
+      if (headM) {
+        chunkStart = chunkStart + headM.index;
+      }
+      const chunk = flat.slice(chunkStart, bestPos + 560).replace(/\s{2,}/g, " ");
+
+      // 출처: 키. 법 제114조제1항 …
+      let itemKey = "";
+      let duty = "";
+      const itemM = chunk.match(
+        /([가-힣]{1,3}|[가나다라마바사아자차카타파하])\.\s*법\s*제\s*(\d+)\s*조(?:제\s*(\d+)\s*항)?/
+      );
+      if (itemM) {
+        itemKey = itemM[1] + ".";
+        duty =
+          `법 제${itemM[2]}조` + (itemM[3] ? `제${itemM[3]}항` : "");
+      } else {
+        const dm = chunk.match(/법\s*제\s*(\d+)\s*조(?:제\s*(\d+)\s*항)?/);
+        if (dm && dm[1] !== "175") {
+          duty = `법 제${dm[1]}조` + (dm[2] ? `제${dm[2]}항` : "");
+        }
+      }
+
+      // 과태료 근거: 반드시 제175조 쪽 (의무 제114조 + 항제N호 오결합 방지)
+      let basis = "";
+      let m175 =
+        chunk.match(
+          /제\s*175\s*조\s*제?\s*(\d+)\s*항\s*제?\s*(\d+(?:의\d+)?)\s*호/
+        ) ||
+        chunk.match(/제\s*175\s*조\s*제(\d+)항제(\d+(?:의\d+)?)호/) ||
+        chunk.match(
+          /제\s*175\s*조\s*제?\s*(\d+)\b[\s\S]{0,120}?항제\s*(\d+(?:의\d+)?)\s*호/
+        );
+      if (m175) {
+        basis = `법 제175조제${m175[1]}항제${m175[2]}호`;
+      }
+
+      // 공통 위반 문구 (작업장 단위까지만, 다음 항 티. 제외)
+      let sharedViol = "";
+      const sv = chunk.match(
+        /게시하지\s*않거나\s*갖추어?\s*두지\s*않은\s*경우(?:\s*\(\s*작업장\s*1개소당\s*\))?/
+      );
+      if (sv) sharedViol = sv[0].replace(/\s+/g, " ").trim();
+      else {
+        const sv2 = chunk.match(
+          /(?:제출하지\s*않은\s*경우|제공하지\s*않은\s*경우|경고표시를\s*하지\s*않은\s*경우|선임하지\s*않은\s*경우)/
+        );
+        if (sv2) sharedViol = sv2[0].replace(/\s+/g, " ").trim();
+      }
+
+      // 단위 메모 — 본 항(다음 한글 항 표지 전)만
+      const selfChunk = chunk.split(
+        /(?=[가나다라마바사아자차카타파하]\.\s*법\s*제|[가-힣]{1,2}\.\s*법\s*제)/
+      )[0] || chunk;
+      let unitNote = "";
+      if (/작업장\s*1개소당/.test(selfChunk)) unitNote = "작업장 1개소당";
+      if (
+        /대상물질\s*1종당|물질안전보건자료대상\s*물질\s*1종당|1\s*종당/.test(
+          selfChunk
+        )
+      ) {
+        unitNote = unitNote
+          ? unitNote + " · 대상물질 1종당"
+          : "대상물질 1종당";
+      } else if (/근로자\s*1명당/.test(selfChunk)) {
+        unitNote = "교육대상 근로자 1명당";
+      }
+
+      // 알려진 세부 라벨 보강 (표 잘림 보정)
+      const knownSub = {
+        "1": "작성한 물질안전보건자료를 게시하지 않거나 갖추어 두지 않은 경우",
+        "2": "제공받은 물질안전보건자료를 게시하지 않거나 갖추어 두지 않은 경우",
+        "3": "양도·제공자로부터 자료를 제공받지 못해 게시·비치하지 않은 경우",
+      };
+
       const rows = [];
       const reItem =
-        /(\d+)\)\s*([^0-9]{6,140}?)\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})/g;
+        /(\d+)\)\s*([^0-9]{4,160}?)\s*(\d{1,4})\s+(\d{1,4})\s+(\d{1,4})/g;
       let m;
       while ((m = reItem.exec(chunk)) !== null && rows.length < 5) {
         let desc = m[2].replace(/\s+/g, " ").trim();
-        if (!/(게시|갖추|제공|제출|경고|선임|작성|물질)/.test(desc)) {
-          desc = (desc + " " + chunk.slice(m.index + m[0].length, m.index + m[0].length + 50))
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 90);
+        // MSDS 게시 행: 알려진 정식 설명 우선
+        if (
+          needMsds &&
+          needPost &&
+          knownSub[m[1]] &&
+          /물질안전|작성한|제공받은|대상물질/.test(desc)
+        ) {
+          desc = knownSub[m[1]];
+        } else if (sharedViol && !desc.includes("게시하지") && !desc.includes("제출하지")) {
+          // 조사 보정
+          const particle = /[을를]$/.test(desc)
+            ? ""
+            : /자료$|자$|물질$/.test(desc)
+              ? "을 "
+              : " ";
+          // "물질안전보건자" 잘림 → 자료
+          desc = desc.replace(/물질안전보건자$/, "물질안전보건자료");
+          desc = (desc + particle + sharedViol).replace(/\s+/g, " ").trim();
         }
+        desc = desc.replace(/\s+/g, " ").trim().slice(0, 130);
         rows.push({
           n: m[1],
-          desc: desc.slice(0, 100),
+          desc,
           a1: m[3],
           a2: m[4],
           a3: m[5],
@@ -2202,46 +2327,75 @@
       }
       if (!rows.length) return null;
 
-      // 근거 조문 힌트
-      let basis = "";
-      const bm = chunk.match(/제\s*(\d+)\s*조\s*제?\s*(\d+)\s*항\s*제?\s*(\d+(?:의\d+)?)\s*호/);
-      if (bm) basis = `법 제${bm[1]}조제${bm[2]}항제${bm[3]}호`;
+      // 별표 번호
+      let byeolLabel = "별표";
+      const art = String(artNo || "");
+      const am = art.match(/별표\s*(\d+(?:의\d+)?)/);
+      if (am) byeolLabel = "별표 " + am[1];
       else {
-        const bm2 = chunk.match(/제(\d+)조제(\d+)\s*항제(\d+(?:의\d+)?)호/);
-        if (bm2) basis = `법 제${bm2[1]}조제${bm2[2]}항제${bm2[3]}호`;
-      }
-      let duty = "";
-      const dm = chunk.match(/법\s*제\s*(\d+)\s*조(?:제(\d+)항)?/);
-      if (dm && dm[1] !== "175") {
-        duty = `법 제${dm[1]}조` + (dm[2] ? `제${dm[2]}항` : "");
+        const tm = String(body).match(/별표\s*(\d+)/);
+        if (tm) byeolLabel = "별표 " + tm[1];
       }
 
-      return { rows, basis, duty, unit: "만원" };
+      // 출처 경로
+      const pathParts = [byeolLabel, "4. 개별기준"];
+      if (itemKey) pathParts.push(itemKey + (duty ? " " + duty : ""));
+      else if (duty) pathParts.push(duty);
+
+      let violTitle = sharedViol || "";
+      if (!violTitle && needMsds && needPost) {
+        violTitle = "물질안전보건자료를 게시하지 않거나 갖추어 두지 않은 경우";
+      }
+
+      return {
+        rows,
+        basis,
+        duty,
+        unit: "만원",
+        unitNote,
+        path: pathParts.join(" › "),
+        itemKey,
+        violTitle,
+        byeolLabel,
+      };
     }
 
     function renderFineBox(fine) {
       if (!fine || !fine.rows || !fine.rows.length) return "";
       const head =
-        `<div class="fine-box-hd">과태료 금액 (별표 개별기준)` +
-        `<span class="fine-unit">단위: ${esc(fine.unit || "만원")} · 1·2·3차 위반</span></div>`;
+        `<div class="fine-box-hd">과태료 금액` +
+        `<span class="fine-unit">단위: ${esc(fine.unit || "만원")} · 1·2·3차 위반` +
+        (fine.unitNote ? ` · ${esc(fine.unitNote)}` : "") +
+        `</span></div>`;
+
+      // 별표 어디를 인용했는지
+      const cite =
+        `<div class="fine-cite">` +
+        `<span class="fine-path"><strong>인용</strong> ${esc(fine.path || "별표 개별기준")}</span>` +
+        (fine.basis
+          ? `<span>· <strong>과태료 근거</strong> ${esc(fine.basis)}</span>`
+          : "") +
+        (fine.violTitle
+          ? `<span class="fine-viol">위반: ${esc(fine.violTitle)}</span>`
+          : "") +
+        `</div>`;
+
       let table =
-        `<table><thead><tr><th>세부</th><th>1차</th><th>2차</th><th>3차 이상</th></tr></thead><tbody>`;
+        `<table><thead><tr><th>세부 (별표 해당 항)</th><th>1차</th><th>2차</th><th>3차 이상</th></tr></thead><tbody>`;
       for (const r of fine.rows) {
         table +=
-          `<tr><td>${esc(r.n + ") " + r.desc)}</td>` +
+          `<tr><td class="desc">${esc(r.n + ") " + r.desc)}</td>` +
           `<td class="amt">${esc(r.a1)}만</td>` +
           `<td class="amt">${esc(r.a2)}만</td>` +
           `<td class="amt">${esc(r.a3)}만</td></tr>`;
       }
       table += `</tbody></table>`;
-      let basis = "";
-      if (fine.duty || fine.basis) {
-        const parts = [];
-        if (fine.duty) parts.push("의무 " + fine.duty);
-        if (fine.basis) parts.push("근거 " + fine.basis);
-        basis = `<div class="fine-basis">${esc(parts.join(" · "))} · 규모 감경·가중 가능 · 참고용</div>`;
-      }
-      return `<div class="fine-box">${head}${table}${basis}</div>`;
+      const foot =
+        `<div class="fine-basis">` +
+        `이 표는 ${esc(fine.byeolLabel || "별표")} 개별기준 중 질문과 맞는 행만 발췌한 것입니다. ` +
+        `규모 감경·가중 가능 · 참고용 · 전문은 PDF` +
+        `</div>`;
+      return `<div class="fine-box">${head}${cite}${table}${foot}</div>`;
     }
 
     /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트 + 위계 스타일) */
@@ -2304,7 +2458,7 @@
           const fine =
             isByeol &&
             (art.includes("35") || /과태료/.test(title) || /과태료|msds|금액|얼마/i.test(question || ""))
-              ? extractByeolFineTable(body, question || "")
+              ? extractByeolFineTable(body, question || "", art)
               : null;
           const fineHtml = fine ? renderFineBox(fine) : "";
           // 별표 표 HTML 자동 변환은 셀 병합·금액 열 오류가 잦음 → PDF 정본
