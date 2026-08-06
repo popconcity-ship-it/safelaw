@@ -767,11 +767,12 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 16px;
-      padding: 8px;
+      padding: 6px 6px 6px 4px;
+      /* 한 줄: 입력·버튼 세로 중앙. 여러 줄: 버튼은 하단 고정 */
       align-items: flex-end;
     }
     .composer-box:focus-within { border-color: var(--accent); }
-    textarea {
+    textarea#input {
       flex: 1;
       resize: none;
       border: none;
@@ -780,10 +781,14 @@
       color: var(--text);
       font: inherit;
       font-size: 0.95rem;
-      min-height: 44px;
+      /* 버튼과 동일 높이(40) — 한 줄 기준 상하 정렬 */
+      min-height: 40px;
       max-height: 140px;
-      padding: 8px 10px;
-      line-height: 1.45;
+      height: 40px;
+      padding: 9px 12px;
+      line-height: 22px;
+      margin: 0;
+      box-sizing: border-box;
     }
     button#send {
       border: none;
@@ -791,10 +796,19 @@
       color: #fff;
       font-weight: 650;
       border-radius: 12px;
-      padding: 10px 16px;
+      height: 40px;
+      min-height: 40px;
+      padding: 0 16px;
+      margin: 0;
       cursor: pointer;
       font-size: 0.9rem;
+      line-height: 1;
       white-space: nowrap;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
     }
     button#send:disabled {
       opacity: 0.45;
@@ -2721,8 +2735,10 @@
     }
 
     function autoGrow() {
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 140) + "px";
+      // 0으로 줄인 뒤 scrollHeight — 빈 칸에서 버튼(40px)과 어긋남 방지
+      input.style.height = "0px";
+      const h = Math.min(Math.max(input.scrollHeight, 40), 140);
+      input.style.height = h + "px";
     }
 
     // 조문 카드 전문 토글 / 본문 인용 클릭 / 검색어 칩
