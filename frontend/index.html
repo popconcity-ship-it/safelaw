@@ -906,6 +906,7 @@
       <button type="button" class="chip" data-q="50인 미만 제조업 사업장도 위험성평가 의무가 있나요?">위험성평가 의무</button>
       <button type="button" class="chip" data-q="중대재해처벌법 경영책임자 의무가 뭐예요?">중처법 경영책임</button>
       <button type="button" class="chip" data-q="산업안전보건법 제36조 내용 알려줘">산안법 제36조</button>
+      <button type="button" class="chip" data-q="산안법 시행령 별표 4 안전관리자 자격">별표 4 자격</button>
       <button type="button" class="chip" data-q="안전보건교육은 언제 해야 하나요?">안전보건교육</button>
     </div>
 
@@ -1002,11 +1003,12 @@
       return t;
     }
 
-    /** 산안법/중처법 제N조 표기를 클릭 가능한 버튼으로 */
+    /** 산안법/중처법 제N조 · 별표 N 표기를 클릭 가능한 버튼으로 */
     function linkifyLawCites(html) {
+      let t = html;
       const re =
         /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:의\s*(\d+))?)\]?/g;
-      return html.replace(re, (m, full, main, sub1, sub2) => {
+      t = t.replace(re, (m, full, main, sub1, sub2) => {
         const sub = sub1 || sub2 || "";
         const art = sub ? `${main}의${sub}` : String(main);
         const label = full.replace(/^\[/, "").replace(/\]$/, "");
@@ -1015,6 +1017,18 @@
           `${esc(label)}</button>`
         );
       });
+      // 별표 N (카드 data-art="별표N")
+      t = t.replace(
+        /별표\s*(\d+)(?:\s*의\s*(\d+))?/g,
+        (m, n, sub) => {
+          const art = sub ? `별표${n}의${sub}` : `별표${n}`;
+          return (
+            `<button type="button" class="law-cite" data-art="${esc(art)}" title="별표 보기">` +
+            `${esc(m)}</button>`
+          );
+        }
+      );
+      return t;
     }
 
     function setLawCardOpen(card, open) {
@@ -1303,15 +1317,23 @@
       const cards = articles
         .map((a) => {
           const art = String(a.article_no || "").replace(/\s/g, "");
-          const cite = `${a.law_name || ""} 제${art}조`;
+          const isByeol = art.startsWith("별표") || art.startsWith("별지");
+          let citeLabel = "";
+          if (art.startsWith("별표")) {
+            citeLabel = `${a.law_name || ""} ${art.replace(/^별표/, "별표 ")}`;
+          } else if (art.startsWith("별지")) {
+            citeLabel = `${a.law_name || ""} ${art.replace(/^별지/, "별지 제")}호서식`;
+          } else {
+            citeLabel = `${a.law_name || ""} 제${art}조`;
+          }
           const title = a.title || "";
           const body = a.body || "";
-          const sum = lawSummary(body, 180, question || "");
+          const sum = lawSummary(body, isByeol ? 220 : 180, question || "");
           return (
             `<div class="law-card" data-art="${esc(art)}">` +
             `<div class="law-top">` +
             `<div class="law-top-text">` +
-            `<div class="law-hd-title">[${highlightKeywords(cite, keywords)}]</div>` +
+            `<div class="law-hd-title">[${highlightKeywords(citeLabel, keywords)}]</div>` +
             (title
               ? `<div class="law-hd-sub">${highlightKeywords(title, keywords)}</div>`
               : "") +
@@ -1319,16 +1341,26 @@
             `<button type="button" class="law-hd-action" aria-expanded="false">▼ 전문</button>` +
             `</div>` +
             (sum
-              ? `<div class="law-sum"><span class="law-sum-label">핵심 요약</span>${highlightKeywords(sum, keywords)}</div>`
+              ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${highlightKeywords(sum, keywords)}</div>`
               : "") +
             `<div class="law-bd">${lawBodyHtml(body, title, keywords)}</div>` +
             `</div>`
           );
         })
         .join("");
+      const nByeol = articles.filter((a) =>
+        String(a.article_no || "").startsWith("별표") ||
+        String(a.article_no || "").startsWith("별지")
+      ).length;
+      const secTitle =
+        nByeol && nByeol === articles.length
+          ? "관련 별표·서식"
+          : nByeol
+            ? "관련 법령·별표"
+            : "관련 법령";
       return (
         `<div class="law-section">` +
-        `<div class="law-section-title">관련 법령</div>` +
+        `<div class="law-section-title">${secTitle}</div>` +
         `<p class="law-section-hint">노란 형광 = 질문 키워드 · 칩 클릭 시 다음 위치 · ▼ 전문 · ${articles.length}건</p>` +
         chipBar +
         cards +

@@ -54,6 +54,78 @@ def _normalize_body(body: str) -> str:
     return normalize_law_body(body)
 
 
+def _clean_byeol_body(body: str) -> str:
+    """별표 본문 공백·표 잔여 정리."""
+    t = (body or "").replace("\u3000", " ")
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    t = re.sub(r"\|{2,}", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    t = re.sub(r" *\n *", "\n", t)
+    return t.strip()
+
+
+def _parse_byeol_units(root: ET.Element, law_name: str, mst: str) -> list[dict]:
+    """별표단위 → corpus 행 (article_no=별표1 / 별지12)."""
+    rows: list[dict] = []
+    for n in root.iter():
+        if _local(n.tag) != "별표단위":
+            continue
+        kids = {_local(c.tag): c for c in n}
+
+        def _t(key: str) -> str:
+            el = kids.get(key)
+            return (el.text or "").strip() if el is not None and el.text else ""
+
+        kind = (_t("별표구분") or "별표").strip()
+        no_raw = _t("별표번호")
+        if not no_raw:
+            continue
+        try:
+            no = str(int(no_raw))
+        except ValueError:
+            no = no_raw.lstrip("0") or no_raw
+        branch = _t("별표가지번호")
+        title = _t("별표제목")
+        body = _clean_byeol_body(_text_of(kids.get("별표내용")))
+        # 원문 다운로드 링크 (법제처)
+        flink = ""
+        for k, el in kids.items():
+            if "링크" in k and el is not None and (el.text or "").strip():
+                flink = (el.text or "").strip()
+                break
+        if flink and not flink.startswith("http"):
+            flink = "https://www.law.go.kr" + flink
+
+        if kind in ("서식", "별지서식") or "서식" in kind:
+            art = f"별지{no}"
+            label = f"별지 제{no}호서식"
+        else:
+            art = f"별표{no}"
+            if branch and branch not in ("0", "00", ""):
+                try:
+                    art = f"별표{no}의{int(branch)}"
+                except ValueError:
+                    art = f"별표{no}의{branch}"
+            label = f"별표 {no}"
+
+        if len(body) < 8 and not title:
+            continue
+        if flink:
+            body = (body + f"\n\n[법제처 원문 파일]({flink})").strip()
+
+        rows.append(
+            {
+                "law_name": law_name,
+                "mst": mst,
+                "article_no": art,
+                "title": title or label,
+                "body": body,
+                "kind": "byeol",
+            }
+        )
+    return rows
+
+
 def parse_law_xml(xml_text: str, law_name: str, mst: str) -> list[dict]:
     if not xml_text.strip() or "<html" in xml_text[:200].lower():
         return []
@@ -105,8 +177,12 @@ def parse_law_xml(xml_text: str, law_name: str, mst: str) -> list[dict]:
                 "article_no": art,
                 "title": title,
                 "body": body,
+                "kind": "article",
             }
         )
+    # 별표·서식
+    byeol = _parse_byeol_units(root, law_name, mst)
+    rows.extend(byeol)
     return rows
 
 

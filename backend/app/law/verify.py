@@ -42,8 +42,20 @@ def _normalize_law_name(raw: str) -> str:
     return matched or s
 
 
+_BYEOL_RE = re.compile(
+    r"(?P<law>"
+    r"「[^」]{2,60}」|"
+    r"(?:산업안전보건법(?:\s*시행령|\s*시행규칙)?|중대재해\s*처벌\s*등에\s*관한\s*법률(?:\s*시행령)?|"
+    r"산안법(?:\s*시행령|\s*시행규칙)?|중처법(?:\s*시행령)?|"
+    r"[가-힣]{2,30}(?:법|령|규칙|지침|고시))"
+    r")?"
+    r"\s*별표\s*(?P<article>\d+)(?:\s*의\s*(?P<sub>\d+))?",
+    re.UNICODE,
+)
+
+
 def extract_citations(text: str) -> list[dict]:
-    """텍스트에서 인용 후보 추출."""
+    """텍스트에서 인용 후보 추출 (제N조 + 별표 N)."""
     found: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -62,6 +74,27 @@ def extract_citations(text: str) -> list[dict]:
                 "law_name": law,
                 "article_no": art,
                 "hang": m.group("hang"),
+            }
+        )
+
+    for m in _BYEOL_RE.finditer(text):
+        law_raw = (m.group("law") or "").strip()
+        law = _normalize_law_name(law_raw) if law_raw else ""
+        art = f"별표{m.group('article')}"
+        if m.group("sub"):
+            art = f"{art}의{m.group('sub')}"
+        key = (law or "*", art)
+        if any(a == art and (not law or l == law or not l) for l, a in seen):
+            # 같은 별표 번호 중복 스킵
+            if any(a == art for _, a in seen):
+                continue
+        seen.add((law, art))
+        found.append(
+            {
+                "raw": m.group(0).strip(),
+                "law_name": law or "산업안전보건법 시행령",
+                "article_no": art,
+                "hang": None,
             }
         )
 

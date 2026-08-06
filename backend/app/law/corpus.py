@@ -141,12 +141,30 @@ def reload_corpus() -> int:
     return len(load_corpus())
 
 
+def normalize_article_key(article_no: str) -> str:
+    """제N조 / 별표 N / 별지 N → 코퍼스 키 (별표1, 36, 36의2)."""
+    art = str(article_no or "").strip()
+    if not art:
+        return ""
+    m = re.match(r"별표\s*(\d+)(?:\s*의\s*(\d+))?", art)
+    if m:
+        return f"별표{m.group(1)}" + (f"의{m.group(2)}" if m.group(2) else "")
+    m = re.match(r"별지\s*(?:제)?\s*(\d+)", art)
+    if m:
+        return f"별지{m.group(1)}"
+    m = re.match(r"(\d+)(?:의(\d+))?", art)
+    if m:
+        return f"{m.group(1)}의{m.group(2)}" if m.group(2) else m.group(1)
+    return art
+
+
 def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
-    """법령명 힌트 + 조 번호로 단건 조회 (전문검색보다 정확).
+    """법령명 힌트 + 조/별표 번호로 단건 조회 (전문검색보다 정확).
 
     본법 우선, 시행령·규칙은 힌트에 있을 때만 우대.
+    별표는 시행령·시행규칙에 많음 → 힌트 없으면 하위법령도 탐색.
     """
-    art = str(article_no or "").strip()
+    art = normalize_article_key(article_no)
     if not art:
         return None
     hint = re.sub(r"\s+", "", (law_hint or "").replace("·", "ㆍ").replace("‧", "ㆍ"))
@@ -156,10 +174,11 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
     if "중처법" in hint:
         hint = hint.replace("중처법", "중대재해처벌등에관한법률")
 
+    is_byeol = art.startswith("별표") or art.startswith("별지")
     want_sub = any(x in hint for x in ("시행령", "시행규칙", "규칙", "지침", "고시"))
     best: tuple[float, dict] | None = None
     for row in load_corpus():
-        if str(row.get("article_no") or "") != art:
+        if normalize_article_key(str(row.get("article_no") or "")) != art:
             continue
         name = row.get("law_name") or ""
         nn = re.sub(r"\s+", "", name.replace("·", "ㆍ"))
@@ -172,9 +191,19 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
             score = 30.0
         elif not hint:
             score = 5.0
+        elif is_byeol:
+            # 별표는 조문과 달리 힌트 법령이 본법이어도 시행령·규칙 별표를 허용
+            score = 8.0
         else:
             continue
-        if not want_sub:
+        if is_byeol:
+            if "시행령" in name:
+                score += 12.0
+            elif "시행규칙" in name:
+                score += 10.0
+            elif want_sub and want_sub:
+                pass
+        elif not want_sub:
             if name == "산업안전보건법" or name.startswith("중대재해"):
                 score += 20.0
             elif "시행령" in name:
@@ -208,13 +237,25 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
     # 쿼리 전체 구문 보너스 (예: "산업안전지도사")
     phrase = re.sub(r"\s+", "", q.lower())
 
+    # 별표 N 직접 지정
+    byeol_m = re.search(r"별표\s*(\d+)(?:\s*의\s*(\d+))?", q)
+    byeol_key = ""
+    if byeol_m:
+        byeol_key = f"별표{byeol_m.group(1)}" + (
+            f"의{byeol_m.group(2)}" if byeol_m.group(2) else ""
+        )
+
     hits: list[dict] = []
     for row in load_corpus():
         title = (row.get("title") or "").lower()
         body = (row.get("body") or "").lower()
         law = (row.get("law_name") or "").lower()
-        blob = f"{title}\n{body}"
+        art_no = str(row.get("article_no") or "")
+        blob = f"{title}\n{body}\n{art_no}"
         score = 0.0
+
+        if byeol_key and normalize_article_key(art_no) == byeol_key:
+            score += 25.0
 
         if phrase and len(phrase) >= 2 and phrase in re.sub(r"\s+", "", blob):
             score += 8.0
@@ -227,8 +268,12 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
             elif t in body:
                 # 긴 토큰일수록 가중
                 score += 1.0 + min(2.0, (len(t) - 2) * 0.25)
-            elif t in law:
+            elif t in law or t in art_no.lower():
                 score += 0.3
+
+        # 별표 쿼리인데 조문만 잔뜩 뜨는 것 완화
+        if "별표" in q and not art_no.startswith("별표") and not art_no.startswith("별지"):
+            score *= 0.35
 
         if score <= 0:
             continue

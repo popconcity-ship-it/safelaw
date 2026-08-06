@@ -192,14 +192,20 @@ class Orchestrator:
     def _article_match(
         self, law: str, art: str, articles: list[Article]
     ) -> Article | None:
+        from ..law.corpus import normalize_article_key
+
         law_n = self._norm_law(law)
+        art_k = normalize_article_key(art)
         for a in articles:
-            if str(a.article_no) != str(art):
+            if normalize_article_key(str(a.article_no)) != art_k:
                 continue
             an = self._norm_law(a.law_name)
             if not law_n or law_n in an or an in law_n:
                 return a
             if len(law_n) >= 2 and (law_n[:4] in an or an[:4] in law_n):
+                return a
+            # 별표는 법령명 힌트가 느슨해도 번호 일치 시 매칭
+            if art_k.startswith("별표") or art_k.startswith("별지"):
                 return a
             # 약칭
             aliases = {

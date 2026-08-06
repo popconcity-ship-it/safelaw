@@ -16,7 +16,7 @@ from cachetools import TTLCache
 
 from ..config import Settings, get_settings
 from ..models.schemas import Article, LawSearchHit
-from .corpus import search_corpus
+from .corpus import get_corpus_article, search_corpus
 from .safety_laws import (
     demo_get_article,
     demo_search,
@@ -294,6 +294,41 @@ class LawClient:
                 return
             articles.append(a)
 
+        # 0) 명시 「별표 N」 — 코퍼스 별표 행
+        for m in re.finditer(
+            r"(?:([가-힣A-Za-zㆍ·\s]{2,40}?)\s*)?별표\s*(\d+)(?:\s*의\s*(\d+))?",
+            expanded,
+        ):
+            law_hint = (m.group(1) or "").strip()
+            art = f"별표{m.group(2)}" + (f"의{m.group(3)}" if m.group(3) else "")
+            candidates = []
+            if law_hint:
+                candidates.append(law_hint)
+            candidates.extend(
+                [
+                    "산업안전보건법 시행령",
+                    "산업안전보건법 시행규칙",
+                    "중대재해 처벌 등에 관한 법률 시행령",
+                    "산업안전보건법",
+                ]
+            )
+            for law_name in candidates:
+                hit = get_corpus_article(law_name, art)
+                if hit:
+                    _append(
+                        Article(
+                            law_name=hit["law_name"],
+                            article_no=str(hit["article_no"]),
+                            title=hit.get("title") or "",
+                            body=hit.get("body") or "",
+                            mst=hit.get("mst"),
+                            source="corpus",
+                        )
+                    )
+                    break
+            if len(articles) >= limit:
+                return articles[:limit]
+
         # 1) 명시적 "제N조" 패턴 — 코퍼스 우선 (네트워크 0)
         explicit = re.findall(
             r"([가-힣A-Za-zㆍ·\s]{2,40}?)\s*제\s*(\d+)(?:\s*조|\s*의\s*(\d+))?",
@@ -303,14 +338,15 @@ class LawClient:
             law_hint = law_hint.strip()
             art = f"{main}의{sub}" if sub else main
             law_name = law_hint if len(law_hint) >= 2 else "산업안전보건법"
-            cached = None
-            for hit in search_corpus(f"{law_name} 제{art}조", limit=5):
-                if str(hit.get("article_no")) == str(art):
-                    if not law_hint or law_name in (hit.get("law_name") or "") or (
-                        hit.get("law_name") or ""
-                    ) in law_name:
-                        cached = hit
-                        break
+            cached = get_corpus_article(law_name, art)
+            if not cached:
+                for hit in search_corpus(f"{law_name} 제{art}조", limit=5):
+                    if str(hit.get("article_no")) == str(art):
+                        if not law_hint or law_name in (hit.get("law_name") or "") or (
+                            hit.get("law_name") or ""
+                        ) in law_name:
+                            cached = hit
+                            break
             if cached:
                 _append(
                     Article(
