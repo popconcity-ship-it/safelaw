@@ -783,6 +783,84 @@
       line-height: 1.4;
       word-break: keep-all;
     }
+    .msg.bot .fine-find {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+    }
+    .msg.bot .fine-find-hd {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #0369a1;
+      margin-bottom: 6px;
+    }
+    .msg.bot .fine-find-tip {
+      font-size: 0.74rem;
+      color: #475569;
+      line-height: 1.45;
+      margin-bottom: 8px;
+    }
+    .msg.bot .fine-find-keys {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .msg.bot .fine-find-keys button,
+    .msg.bot .fine-find-actions button,
+    .msg.bot .fine-find-actions a {
+      font: inherit;
+      font-size: 0.75rem;
+      font-weight: 650;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #7dd3fc;
+      background: #fff;
+      color: #0c4a6e;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .msg.bot .fine-find-keys button:hover,
+    .msg.bot .fine-find-actions button:hover,
+    .msg.bot .fine-find-actions a:hover {
+      background: #e0f2fe;
+    }
+    .msg.bot .fine-find-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .msg.bot .fine-find-actions .primary {
+      background: #0284c7;
+      border-color: #0284c7;
+      color: #fff;
+    }
+    .msg.bot .fine-find-actions .primary:hover {
+      background: #0369a1;
+    }
+    .msg.bot .fine-find-toast {
+      font-size: 0.72rem;
+      color: #15803d;
+      font-weight: 600;
+      min-height: 1.2em;
+      margin-top: 6px;
+    }
+    .msg.bot .fine-box table.fine-official th:nth-child(1),
+    .msg.bot .fine-box table.fine-official td:nth-child(1) {
+      min-width: 7.5rem;
+    }
+    .msg.bot .fine-box table.fine-official .col-basis {
+      font-size: 0.78rem;
+      color: #1e3a5f;
+      font-weight: 650;
+      white-space: nowrap;
+    }
     .msg.bot .kosha-section {
       margin: 12px 0 6px;
     }
@@ -2347,6 +2425,42 @@
         violTitle = "물질안전보건자료를 게시하지 않거나 갖추어 두지 않은 경우";
       }
 
+      // PDF 검색용 키워드 (짧고 유일성 높은 순)
+      const searchKeys = [];
+      const pushKey = (k) => {
+        const s = String(k || "").replace(/\s+/g, " ").trim();
+        if (s && s.length >= 4 && !searchKeys.includes(s)) searchKeys.push(s);
+      };
+      if (itemKey && duty) {
+        // 원본 표 왼쪽 열 시작: "키. 법 제114조제1항"
+        pushKey(`${itemKey} ${duty}`);
+      }
+      if (duty) {
+        pushKey(duty);
+        pushKey(duty.replace(/^법\s*/, "제").replace(/^제제/, "제"));
+      }
+      if (basis) pushKey(basis);
+      if (rows[0] && rows[0].desc) {
+        // 세부 1) 앞부분 — PDF 하이라이트용 (사용자 스크린샷과 동일)
+        const head = rows[0].desc.replace(/\s+/g, " ").slice(0, 12);
+        if (head.length >= 6) pushKey(head);
+      }
+      // 위반행위 열 요약 (원본 표 왼쪽 칸)
+      let violCol = "";
+      if (duty && sharedViol) {
+        violCol = `${duty}을 위반하여 물질안전보건자료를 ${sharedViol}`.replace(
+          /을 위반하여 물질안전보건자료를 게시하지/,
+          "을 위반하여 물질안전보건자료를 게시하지"
+        );
+      } else if (needMsds && needPost) {
+        violCol =
+          (duty ? duty + "을 위반하여 " : "") +
+          "물질안전보건자료를 게시하지 않거나 갖추어 두지 않은 경우";
+      }
+      if (unitNote && violCol && !violCol.includes("1개소") && !violCol.includes("1종")) {
+        violCol += ` (${unitNote})`;
+      }
+
       return {
         rows,
         basis,
@@ -2356,11 +2470,13 @@
         path: pathParts.join(" › "),
         itemKey,
         violTitle,
+        violCol,
         byeolLabel,
+        searchKeys: searchKeys.slice(0, 4),
       };
     }
 
-    function renderFineBox(fine) {
+    function renderFineBox(fine, pdfUrl) {
       if (!fine || !fine.rows || !fine.rows.length) return "";
       const head =
         `<div class="fine-box-hd">과태료 금액` +
@@ -2371,31 +2487,77 @@
       // 별표 어디를 인용했는지
       const cite =
         `<div class="fine-cite">` +
-        `<span class="fine-path"><strong>인용</strong> ${esc(fine.path || "별표 개별기준")}</span>` +
+        `<span class="fine-path"><strong>인용 위치</strong> ${esc(fine.path || "별표 개별기준")}</span>` +
         (fine.basis
-          ? `<span>· <strong>과태료 근거</strong> ${esc(fine.basis)}</span>`
+          ? `<span>· <strong>근거법조문 열</strong> ${esc(fine.basis)}</span>`
           : "") +
         (fine.violTitle
-          ? `<span class="fine-viol">위반: ${esc(fine.violTitle)}</span>`
+          ? `<span class="fine-viol">위반 요지: ${esc(fine.violTitle)}</span>`
           : "") +
         `</div>`;
 
+      // 원본 별표 열 구성에 맞춤: 위반행위 | 근거법조문 | 세부 | 금액
       let table =
-        `<table><thead><tr><th>세부 (별표 해당 항)</th><th>1차</th><th>2차</th><th>3차 이상</th></tr></thead><tbody>`;
-      for (const r of fine.rows) {
+        `<table class="fine-official"><thead><tr>` +
+        `<th>위반행위 (별표)</th><th>근거법조문</th><th>세부</th><th>1차</th><th>2차</th><th>3차</th>` +
+        `</tr></thead><tbody>`;
+      fine.rows.forEach((r, idx) => {
+        table += "<tr>";
+        if (idx === 0) {
+          table +=
+            `<td class="desc" rowspan="${fine.rows.length}">` +
+            esc(fine.violCol || fine.violTitle || fine.path) +
+            `</td>`;
+          table +=
+            `<td class="col-basis" rowspan="${fine.rows.length}">` +
+            esc(fine.basis || "—") +
+            `</td>`;
+        }
         table +=
-          `<tr><td class="desc">${esc(r.n + ") " + r.desc)}</td>` +
-          `<td class="amt">${esc(r.a1)}만</td>` +
-          `<td class="amt">${esc(r.a2)}만</td>` +
-          `<td class="amt">${esc(r.a3)}만</td></tr>`;
-      }
+          `<td class="desc">${esc(r.n + ") " + r.desc)}</td>` +
+          `<td class="amt">${esc(r.a1)}</td>` +
+          `<td class="amt">${esc(r.a2)}</td>` +
+          `<td class="amt">${esc(r.a3)}</td>`;
+        table += "</tr>";
+      });
       table += `</tbody></table>`;
+
+      // PDF 점프 도우미
+      const keys = fine.searchKeys || [];
+      const primaryKey = keys[0] || fine.duty || "";
+      let findBox = "";
+      if (pdfUrl || keys.length) {
+        const keyBtns = keys
+          .map(
+            (k) =>
+              `<button type="button" class="fine-copy-key" data-copy="${esc(k)}" title="검색어 복사">📋 ${esc(k)}</button>`
+          )
+          .join("");
+        findBox =
+          `<div class="fine-find" data-pdf="${esc(pdfUrl || "")}" data-primary-key="${esc(primaryKey)}">` +
+          `<div class="fine-find-hd">PDF 원본에서 이 행 찾기</div>` +
+          `<div class="fine-find-tip">` +
+          `전체 별표는 길어서 스크롤로 찾기 어렵습니다. ` +
+          `<strong>검색어를 복사한 뒤 PDF에서 Ctrl+F (Mac: ⌘F)</strong>로 붙여넣으면 ` +
+          `<strong>${esc(fine.itemKey || "해당 항")}</strong> 근처로 바로 갑니다.` +
+          `</div>` +
+          (keyBtns ? `<div class="fine-find-keys">${keyBtns}</div>` : "") +
+          `<div class="fine-find-actions">` +
+          (pdfUrl
+            ? `<button type="button" class="primary fine-open-pdf-find">PDF 열기 + 검색어 복사</button>` +
+              `<a href="${esc(pdfUrl)}" target="_blank" rel="noopener">PDF만 열기</a>`
+            : "") +
+          `</div>` +
+          `<div class="fine-find-toast" aria-live="polite"></div>` +
+          `</div>`;
+      }
+
       const foot =
         `<div class="fine-basis">` +
-        `이 표는 ${esc(fine.byeolLabel || "별표")} 개별기준 중 질문과 맞는 행만 발췌한 것입니다. ` +
-        `규모 감경·가중 가능 · 참고용 · 전문은 PDF` +
+        `위 표는 ${esc(fine.byeolLabel || "별표")} 개별기준 텍스트에서 질문 관련 행을 재구성한 것입니다. ` +
+        `금액 단위: 만원 · 규모 감경·가중 가능 · 최종 확인은 PDF 원본` +
         `</div>`;
-      return `<div class="fine-box">${head}${cite}${table}${foot}</div>`;
+      return `<div class="fine-box">${head}${cite}${table}${findBox}${foot}</div>`;
     }
 
     /** articles_used → 요약 노출 + 전문 펼침 카드 (+ 검색어 하이라이트 + 위계 스타일) */
@@ -2460,7 +2622,7 @@
             (art.includes("35") || /과태료/.test(title) || /과태료|msds|금액|얼마/i.test(question || ""))
               ? extractByeolFineTable(body, question || "", art)
               : null;
-          const fineHtml = fine ? renderFineBox(fine) : "";
+          const fineHtml = fine ? renderFineBox(fine, pdfUrl) : "";
           // 별표 표 HTML 자동 변환은 셀 병합·금액 열 오류가 잦음 → PDF 정본
           let bdInner = "";
           if (hasMedia) {
@@ -3186,7 +3348,32 @@
       input.style.height = h + "px";
     }
 
-    // 조문 카드 전문 토글 / 본문 인용 클릭 / 검색어 칩
+    async function copyTextToClipboard(text) {
+      const t = String(text || "");
+      if (!t) return false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(t);
+          return true;
+        }
+      } catch (_) {}
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    // 조문 카드 전문 토글 / 본문 인용 클릭 / 검색어 칩 / 별표 PDF 찾기
     messagesEl.addEventListener("click", (e) => {
       const chip = e.target.closest("button.kw-chip");
       if (chip && messagesEl.contains(chip)) {
@@ -3199,6 +3386,40 @@
         e.preventDefault();
         const card = act.closest(".law-card");
         if (card) setLawCardOpen(card, !card.classList.contains("open"));
+        return;
+      }
+      // 별표 금액 → PDF 검색어 복사 / PDF 열기+복사
+      const copyKey = e.target.closest(".fine-copy-key");
+      if (copyKey && messagesEl.contains(copyKey)) {
+        e.preventDefault();
+        const box = copyKey.closest(".fine-find");
+        const toast = box && box.querySelector(".fine-find-toast");
+        const key = copyKey.getAttribute("data-copy") || "";
+        copyTextToClipboard(key).then((ok) => {
+          if (toast) {
+            toast.textContent = ok
+              ? `「${key}」 복사됨 → PDF에서 Ctrl+F / ⌘F 로 붙여넣기`
+              : "복사 실패 — 검색어를 길게 눌러 복사해 주세요";
+          }
+        });
+        return;
+      }
+      const openFind = e.target.closest(".fine-open-pdf-find");
+      if (openFind && messagesEl.contains(openFind)) {
+        e.preventDefault();
+        const box = openFind.closest(".fine-find");
+        if (!box) return;
+        const pdf = (box.getAttribute("data-pdf") || "").trim();
+        const key = (box.getAttribute("data-primary-key") || "").trim();
+        const toast = box.querySelector(".fine-find-toast");
+        copyTextToClipboard(key).then((ok) => {
+          if (toast) {
+            toast.textContent = ok
+              ? `검색어 「${key}」 복사됨 → 열린 PDF에서 Ctrl+F / ⌘F`
+              : "PDF를 연 뒤 위 검색어 버튼으로 복사하세요";
+          }
+          if (pdf) window.open(pdf, "_blank", "noopener,noreferrer");
+        });
         return;
       }
       const btn = e.target.closest(".law-cite");
