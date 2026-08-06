@@ -701,6 +701,51 @@
       word-break: break-word;
     }
     .msg.bot th { background: var(--surface2); }
+    /* 별표 표 (법제처 박스문자 → HTML 표) */
+    .byeol-table-wrap {
+      overflow-x: auto;
+      margin: 8px 0 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fff;
+      -webkit-overflow-scrolling: touch;
+    }
+    .msg.bot table.byeol-table {
+      display: table;
+      width: max-content;
+      min-width: 100%;
+      max-width: none;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin: 0;
+      overflow: visible;
+    }
+    .msg.bot table.byeol-table th,
+    .msg.bot table.byeol-table td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+      vertical-align: top;
+      line-height: 1.4;
+      max-width: 16em;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+    .msg.bot table.byeol-table th {
+      background: #f1f5f9;
+      font-weight: 650;
+      color: #0f172a;
+      white-space: nowrap;
+    }
+    .msg.bot table.byeol-table tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+    .byeol-prose {
+      margin: 0 0 0.55em;
+      line-height: 1.55;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+    .byeol-prose:last-child { margin-bottom: 0; }
     .doc-bar {
       display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
     }
@@ -1283,10 +1328,150 @@
       return out;
     }
 
+    /** 한글 줄바꿈 재결합 (위/반행위 → 위반행위) */
+    function reflowProseLines(lines) {
+      const out = [];
+      for (const raw of lines) {
+        const ln = String(raw || "").trim();
+        if (!ln) continue;
+        if (!out.length) {
+          out.push(ln);
+          continue;
+        }
+        const prev = out[out.length - 1];
+        // 목록·항 시작이면 새 줄
+        if (/^(?:[①-⑮]|[0-9]+[.)]|[가-힣][.)]|[가-힣]의\d|[■□▪]|[-–•]|\[[^\]]+\])/.test(ln)) {
+          out.push(ln);
+          continue;
+        }
+        // 이전이 문장 끝이면 새 줄
+        if (/[.。!?）」》>\]]$/.test(prev) || /다\.$/.test(prev) || /요\.$/.test(prev)) {
+          out.push(ln);
+          continue;
+        }
+        // 한글 중간 끊김 → 공백 없이 이어붙임
+        if (/[가-힣0-9a-zA-Z,，、·ㆍ)]$/.test(prev) && /^[가-힣0-9a-zA-Z(]/.test(ln)) {
+          out[out.length - 1] = prev + ln;
+        } else {
+          out[out.length - 1] = prev + (prev.endsWith(" ") ? "" : " ") + ln;
+        }
+      }
+      return out;
+    }
+
+    /** 박스문자(┌│) 표 → HTML table. 실패 시 null */
+    function renderBoxTable(lines, keywords) {
+      const rows = [];
+      for (const line of lines) {
+        const s = String(line || "");
+        // 순수 테두리 줄
+        if (/^[┌┐└┘├┤┬┴┼─═|\s]+$/.test(s)) continue;
+        if (!/[│|]/.test(s)) continue;
+        let cells = s.split(/[│|]/).map((c) => c.replace(/[─┌┐└┘├┤┬┴┼═]/g, "").trim());
+        if (cells.length && cells[0] === "") cells.shift();
+        if (cells.length && cells[cells.length - 1] === "") cells.pop();
+        if (!cells.length || cells.every((c) => !c)) continue;
+        rows.push(cells);
+      }
+      if (rows.length < 2) return null;
+
+      const maxCols = Math.max(...rows.map((r) => r.length));
+      const merged = [];
+      for (const row of rows) {
+        const r = row.slice();
+        while (r.length < maxCols) r.push("");
+        const allEmptyFirst =
+          merged.length &&
+          !r[0] &&
+          r.some((c) => c) &&
+          // 이어지는 줄: 첫 칸 비고 내용만 있음
+          true;
+        if (allEmptyFirst && !r[0]) {
+          const prev = merged[merged.length - 1];
+          for (let c = 0; c < maxCols; c++) {
+            if (!r[c]) continue;
+            const a = prev[c] || "";
+            const b = r[c];
+            if (a && /[가-힣]$/.test(a) && /^[가-힣]/.test(b)) prev[c] = a + b;
+            else prev[c] = (a + (a && b ? " " : "") + b).replace(/\s+/g, " ").trim();
+          }
+        } else {
+          merged.push(r);
+        }
+      }
+      if (merged.length < 1) return null;
+
+      // 헤더: 첫 행이 짧거나 키워드성
+      let html = `<div class="byeol-table-wrap"><table class="byeol-table"><tbody>`;
+      merged.forEach((row, ri) => {
+        html += "<tr>";
+        row.forEach((cell) => {
+          const tag = ri === 0 ? "th" : "td";
+          html += `<${tag}>${lawTextHtml(cell, keywords)}</${tag}>`;
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table></div>";
+      return html;
+    }
+
+    /** 별표 본문: 표 구간 HTML 표 + 산문 재결합 */
+    function formatByeolBodyHtml(body, keywords) {
+      const lines = String(body || "").replace(/\r/g, "").split("\n");
+      const out = [];
+      let i = 0;
+      const isTableLine = (ln) => /[┌┐└┘├┤┬┴┼─│|]/.test(ln);
+
+      while (i < lines.length) {
+        if (isTableLine(lines[i])) {
+          const block = [];
+          while (i < lines.length && (isTableLine(lines[i]) || !String(lines[i]).trim())) {
+            if (String(lines[i]).trim()) block.push(lines[i]);
+            i++;
+          }
+          const table = renderBoxTable(block, keywords);
+          if (table) out.push(table);
+          else {
+            // 표 파싱 실패 → 가로 스크롤 pre
+            out.push(
+              `<div class="byeol-table-wrap"><pre class="byeol-table" style="margin:0;padding:10px;font-size:0.72rem;line-height:1.35;white-space:pre;overflow-x:auto">${esc(
+                block.join("\n")
+              )}</pre></div>`
+            );
+          }
+        } else {
+          const prose = [];
+          while (i < lines.length && !isTableLine(lines[i])) {
+            if (String(lines[i]).trim()) prose.push(lines[i]);
+            i++;
+          }
+          const reflowed = reflowProseLines(prose);
+          reflowed.forEach((p) => {
+            out.push(`<div class="byeol-prose">${lawTextHtml(p, keywords)}</div>`);
+          });
+        }
+      }
+      return out.join("") || `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
+    }
+
     /** 본문 HTML — 항(①②)·호 단위 (고아 번호 줄 제거 후) */
-    function lawBodyHtml(body, titleHint, keywords) {
+    function lawBodyHtml(body, titleHint, keywords, isByeol) {
       let t = normalizeLawBody(body);
       if (!t) return `<div class="hang" style="color:var(--muted)">(본문 없음)</div>`;
+      // 별표·표 형태 → 전용 렌더러
+      if (
+        isByeol ||
+        /[┌┐└┘├┤┬┴┼─│]/.test(t) ||
+        (t.match(/\|/g) || []).length >= 8
+      ) {
+        // 제목 줄 정리
+        t = t.replace(/^■[^\n]*\n?/, "").trim();
+        if (titleHint) {
+          const th = String(titleHint).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          t = t.replace(new RegExp("^" + th + "\\s*\\n?"), "").trim();
+        }
+        return formatByeolBodyHtml(t, keywords);
+      }
       // 카드 헤더에 이미 있는 「제N조(제목)」 접두만 제거.
       // ⛔ [^\n]* 금지 — 제146조처럼 제목·본문이 한 줄이면 전문이 통째로 사라짐
       t = t.replace(/^제\s*\d+(?:의\d+)?조(?:\s*\([^)]*\))?/, "").trim();
@@ -1369,7 +1554,7 @@
             (sum
               ? `<div class="law-sum"><span class="law-sum-label">${isByeol ? "별표 요약" : "핵심 요약"}</span>${lawTextHtml(sum, keywords)}</div>`
               : "") +
-            `<div class="law-bd">${lawBodyHtml(body, title, keywords)}</div>` +
+            `<div class="law-bd">${lawBodyHtml(body, title, keywords, isByeol)}</div>` +
             `</div>`
           );
         })
