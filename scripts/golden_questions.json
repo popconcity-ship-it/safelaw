@@ -1,0 +1,84 @@
+[
+  {
+    "id": "energy-boiler-penalty",
+    "q": "보일러 검사 안받으면 처벌",
+    "domain": "energy_thermal",
+    "must_laws": ["에너지이용"],
+    "must_articles": ["39", "73"],
+    "forbid_articles": ["114", "175"],
+    "forbid_laws": ["산업안전보건법"],
+    "answer_must": ["징역", "벌금"],
+    "answer_forbid": ["1차 100", "100만원, 2차"]
+  },
+  {
+    "id": "energy-boiler-short",
+    "q": "보일러 검사 미수검 벌칙",
+    "domain": "energy_thermal",
+    "must_laws": ["에너지이용"],
+    "must_articles": ["73"],
+    "forbid_articles": ["114", "175"],
+    "answer_must": ["벌금"],
+    "answer_forbid": ["1차 100"]
+  },
+  {
+    "id": "msds-fine",
+    "q": "물질안전보건자료 게시 안 하면 과태료 얼마",
+    "domain": "msds",
+    "must_laws": ["산업안전보건"],
+    "must_articles": ["114", "175", "별표35"],
+    "forbid_laws": ["에너지이용"],
+    "answer_forbid": []
+  },
+  {
+    "id": "msds-attach",
+    "q": "MSDS 미부착 과태료",
+    "domain": "msds",
+    "must_laws": ["산업안전보건"],
+    "must_articles": ["114"],
+    "forbid_laws": ["에너지이용"]
+  },
+  {
+    "id": "risk-assessment-duty",
+    "q": "50인 미만도 위험성평가 해야 하나요?",
+    "domain": "risk_assessment",
+    "must_articles": ["36"],
+    "must_laws": ["산업안전보건"],
+    "answer_must": ["36"]
+  },
+  {
+    "id": "serious-accident",
+    "q": "중대재해처벌법 경영책임자 의무",
+    "domain": "serious_accident",
+    "must_laws": ["중대재해"],
+    "must_articles": ["4"]
+  },
+  {
+    "id": "advisor",
+    "q": "산업안전지도사 자격",
+    "domain": "advisor",
+    "must_laws": ["산업안전보건"],
+    "must_articles": ["142"]
+  },
+  {
+    "id": "energy-not-msds-cross",
+    "q": "검사대상기기 설치검사 안 받으면",
+    "domain": "energy_thermal",
+    "must_laws": ["에너지이용"],
+    "forbid_articles": ["114", "175"],
+    "forbid_laws": ["산업안전보건법"]
+  },
+  {
+    "id": "sanan-safety-manager",
+    "q": "안전관리자 선임 의무",
+    "domain": "general",
+    "must_laws": ["산업안전보건"],
+    "must_articles": ["17"]
+  },
+  {
+    "id": "energy-thermal-keyword",
+    "q": "열사용기자재 검사 기준",
+    "domain": "energy_thermal",
+    "must_laws": ["열사용", "에너지이용"],
+    "forbid_laws": ["산업안전보건법"]
+  }
+]

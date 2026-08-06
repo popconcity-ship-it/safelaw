@@ -17,6 +17,12 @@ from ..documents.generator import (
 )
 from ..kosha.search import format_kosha_block, search_kosha
 from ..law.client import LawClient
+from ..law.domain_router import (
+    domain_prompt_hint,
+    filter_articles_by_domain,
+    is_legal_focus,
+    route_domain,
+)
 from ..law.verify import extract_citations
 from ..models.schemas import (
     Article,
@@ -25,11 +31,9 @@ from ..models.schemas import (
     DocumentPayload,
     KoshaSource,
 )
+from .answer_gate import build_grounded_answer, gate_answer
 from .prompts import (
     SYSTEM_PROMPT,
-    _is_boiler_penalty_query,
-    answer_looks_like_msds_fine_hallucination,
-    boiler_penalty_fixed_answer,
     build_user_prompt,
     demo_answer,
     format_articles_block,
@@ -79,22 +83,15 @@ class Orchestrator:
         import asyncio
 
         intent = classify_intent(message)
-        boiler_penalty = _is_boiler_penalty_query(message)
+        domain = route_domain(message)
         # KOSHA PDF 32k 청크 스캔은 비쌈 → 가이드 의도일 때만
-        # 법조·과태료·제N조 질문은 시드/카탈로그만 (체감 지연↓)
         want_pdf = intent in ("kosha", "risk_assessment", "education")
         if any(
             k in message
             for k in ("KOSHA", "kosha", "가이드", "안전보건공단", "기술지침")
         ):
             want_pdf = True
-        # 처벌·벌칙·과태료 질문: 법 조문이 본선 — KOSHA 노이즈 최소화
-        legal_focus = boiler_penalty or (
-            any(k in message for k in ("처벌", "벌칙", "과태료", "얼마", "부과"))
-            and not any(
-                k in message for k in ("KOSHA", "kosha", "가이드", "기술지침")
-            )
-        )
+        legal_focus = is_legal_focus(message, domain)
         kosha_limit = 0 if legal_focus else (3 if want_pdf else 2)
 
         async def _kosha() -> list:
@@ -111,8 +108,8 @@ class Orchestrator:
             self.law.get_articles_for_query(message, limit=5),
             _kosha(),
         )
-        if boiler_penalty:
-            articles = self._force_boiler_penalty_articles(articles)
+        articles = filter_articles_by_domain(articles, domain)
+        if legal_focus:
             kosha_hits = []
         from ..kosha.pdf_pipeline import local_pdf_url
 
@@ -174,40 +171,58 @@ class Orchestrator:
                 "상단 문서 영역에서 복사·다운로드할 수 있습니다. "
                 "현장 실정에 맞게 수정하세요."
             )
-        elif boiler_penalty:
-            # LLM 환각(산안법 100/200/500) 방지 — 조문 고정 답변
-            intent = "boiler_penalty"
-            answer = boiler_penalty_fixed_answer()
-            kosha_sources = []
-        elif self.settings.use_demo_llm:
-            answer = demo_answer(message, articles, kosha_hits)
         else:
-            # LLM용 KOSHA 블록은 짧게 (토큰·지연 감소)
-            short_kosha = format_kosha_block(kosha_hits[:2]) if kosha_hits else None
-            answer = await self._generate_llm(
-                message,
-                articles,
-                history or [],
-                workplace,
-                kosha_hits=kosha_hits,
-                kosha_block=short_kosha,
-            )
-            # 안전망: LLM이 MSDS 과태료를 섞으면 고정 답으로 교체
-            if boiler_penalty or (
-                _is_boiler_penalty_query(message)
-                and answer_looks_like_msds_fine_hallucination(answer)
-            ):
-                answer = boiler_penalty_fixed_answer()
-                articles = self._force_boiler_penalty_articles(articles)
+            # 1) 조문만으로 답 가능하면 LLM 생략 (도메인 grounded_only 등)
+            grounded = build_grounded_answer(message, articles, domain)
+            if grounded and domain.grounded_only:
+                intent = f"domain:{domain.id}"
+                answer = grounded
                 kosha_sources = []
+            elif self.settings.use_demo_llm:
+                answer = demo_answer(message, articles, kosha_hits)
+            else:
+                short_kosha = (
+                    format_kosha_block(kosha_hits[:2]) if kosha_hits else None
+                )
+                # 도메인 힌트를 질문에 짧게 덧붙이지 않고 프롬프트 힌트로 전달
+                hint = domain_prompt_hint(domain)
+                msg_for_llm = message
+                if hint:
+                    # build_user_prompt 전에 articles 블록에 힌트가 들어가도록
+                    # history 오염 없이 시스템 쪽으로는 _generate_llm 내부 처리 어려움
+                    # → workplace 대신 질문 접두 (단일 턴)
+                    msg_for_llm = f"{message}\n\n(시스템 힌트: {hint})"
+                answer = await self._generate_llm(
+                    msg_for_llm,
+                    articles,
+                    history or [],
+                    workplace,
+                    kosha_hits=kosha_hits,
+                    kosha_block=short_kosha,
+                )
+
+            # 2) 인용·금액 검증 게이트 (전 질문 공통)
+            if not document_payload:
+                answer, replaced = gate_answer(
+                    answer, articles, domain, question=message
+                )
+                if replaced:
+                    logger.info(
+                        "answer_gate replaced domain=%s q=%s",
+                        domain.id,
+                        message[:40],
+                    )
+                    # 환각 인용으로 카드 오염 방지 — 도메인 필터 유지
+                    articles = filter_articles_by_domain(articles, domain)
 
         # 답변·조문 본문에 인용된 조/별표가 카드에 없으면 코퍼스 보강
-        if not document_payload and not boiler_penalty:
-            articles = self._enrich_articles_from_answer(answer, articles)
+        # 도메인 밖 법령은 enrich 하지 않음
+        if not document_payload and not domain.grounded_only:
+            articles = self._enrich_articles_from_answer(
+                answer, articles, domain=domain
+            )
             articles = self._enrich_byeol_from_articles(articles)
-        elif boiler_penalty:
-            # 고정 답 인용만 반영 (산안법 환각 인용 차단)
-            articles = self._force_boiler_penalty_articles(articles)
+            articles = filter_articles_by_domain(articles, domain)
 
         # 인용 재조회(법제처)는 느림 → 이미 확보한 조문으로 가벼운 검증만
         citations = self._citations_from_articles(answer, articles)
@@ -220,52 +235,11 @@ class Orchestrator:
             articles_used=articles,
             kosha_sources=kosha_sources,
             document=document_payload,
-            intent=intent,
+            intent=intent if intent.startswith("domain:") or intent == "document" else (
+                f"domain:{domain.id}" if domain.id != "general" else intent
+            ),
             demo=self.settings.use_demo_law or self.settings.use_demo_llm,
         )
-
-    def _force_boiler_penalty_articles(self, articles: list[Article]) -> list[Article]:
-        """에너지법 제39·73 고정 + 산안법/별지/과태료 별표 제거."""
-        from ..law.corpus import article_from_row, get_corpus_article
-
-        forced: list[Article] = []
-        for law, art in (
-            ("에너지이용 합리화법", "39"),
-            ("에너지이용 합리화법", "73"),
-            ("열사용기자재의 검사 및 검사면제에 관한 기준", "개요"),
-            ("열사용기자재의 검사 및 검사면제에 관한 기준", "2편"),
-        ):
-            hit = get_corpus_article(law, art)
-            if hit:
-                forced.append(article_from_row(hit))
-
-        def _ok(a: Article) -> bool:
-            law = a.law_name or ""
-            art = str(a.article_no or "")
-            if art.startswith("별지") or "서식" in (a.title or ""):
-                return False
-            if "산업안전보건" in law:
-                return False
-            if art.startswith("별표") and "에너지" in law:
-                return False  # 별표5 과태료 혼동 방지
-            if "에너지" in law or "열사용" in law:
-                return True
-            return False
-
-        seen = {
-            (self._norm_law(a.law_name), str(a.article_no)) for a in forced
-        }
-        for a in articles:
-            if not _ok(a):
-                continue
-            key = (self._norm_law(a.law_name), str(a.article_no))
-            if key in seen:
-                continue
-            seen.add(key)
-            forced.append(a)
-            if len(forced) >= 5:
-                break
-        return forced[:5]
 
     @staticmethod
     def _norm_law(s: str) -> str:
@@ -302,17 +276,22 @@ class Orchestrator:
         return None
 
     def _enrich_articles_from_answer(
-        self, answer: str, articles: list[Article]
+        self,
+        answer: str,
+        articles: list[Article],
+        domain=None,
     ) -> list[Article]:
         """답변 본문 인용 조문을 코퍼스에서 보강 — 카드·클릭 정합.
 
         네트워크(법제처) 없이 로컬 코퍼스만. 최대 6건.
+        domain 이 있으면 허용 법령만 보강.
         """
         from ..law.corpus import (
             article_from_row,
             get_corpus_article,
             normalize_article_key,
         )
+        from ..law.domain_router import law_allowed
 
         extracted = extract_citations(answer or "")
         if not extracted:
@@ -332,6 +311,8 @@ class Orchestrator:
             art = str(c.get("article_no") or "")
             if not art:
                 continue
+            if domain is not None and law and not law_allowed(law, domain):
+                continue
             if self._article_match(law, art, out):
                 continue
             art_k = normalize_article_key(art)
@@ -349,12 +330,19 @@ class Orchestrator:
                     "중대재해 처벌 등에 관한 법률 시행령",
                     "산업안전보건법",
                 ):
+                    if domain is not None and not law_allowed(trial, domain):
+                        continue
                     hit = get_corpus_article(trial, art)
                     if hit:
                         break
             if not hit and ("산안법" in law or "산업안전" in law or not law):
-                hit = get_corpus_article("산업안전보건법", art)
+                if domain is None or law_allowed("산업안전보건법", domain):
+                    hit = get_corpus_article("산업안전보건법", art)
             if not hit:
+                continue
+            if domain is not None and not law_allowed(
+                hit.get("law_name") or "", domain
+            ):
                 continue
 
             a = article_from_row(hit)

@@ -282,16 +282,29 @@ class LawClient:
         """질문에서 관련 조문 수집.
 
         우선순위:
-        1) 명시 「제N조」
-        2) 로컬 조문 코퍼스 전문검색 (CORE 법령 전체) ← 키워드 맵 불필요
-        3) 주제 키워드 맵 (코퍼스 없을 때·보강용)
-        4) 오답 기본조(산안법 36) 폴백 없음
+        0) 도메인 시드 조문
+        1) 명시 「제N조」·별표
+        2) 주제 키워드 맵
+        3) 로컬 코퍼스 전문검색 (도메인 스코프)
         """
+        from .domain_router import (
+            filter_articles_by_domain,
+            law_allowed,
+            route_domain,
+        )
+
         expanded = resolve_query_aliases(query)
+        domain = route_domain(expanded)
         articles: list[Article] = []
 
         def _append(a: Article | None) -> None:
             if not a:
+                return
+            if not law_allowed(a.law_name or "", domain):
+                return
+            if domain.exclude_forms and (
+                str(a.article_no).startswith("별지") or "서식" in (a.title or "")
+            ):
                 return
             if any(
                 x.law_name == a.law_name and x.article_no == a.article_no for x in articles
@@ -299,7 +312,15 @@ class LawClient:
                 return
             articles.append(a)
 
-        # 0) 명시 「별표 N」 — 코퍼스 별표 행
+        # 0) 도메인 시드
+        for law, art in domain.seed_articles:
+            cached = get_corpus_article(law, art)
+            if cached:
+                _append(article_from_row(cached))
+            if len(articles) >= limit:
+                return filter_articles_by_domain(articles, domain)[:limit]
+
+        # 1) 명시 「별표 N」 — 코퍼스 별표 행
         for m in re.finditer(
             r"(?:([가-힣A-Za-zㆍ·\s]{2,40}?)\s*)?별표\s*(\d+)(?:\s*의\s*(\d+))?",
             expanded,
@@ -309,6 +330,18 @@ class LawClient:
             candidates = []
             if law_hint:
                 candidates.append(law_hint)
+            if domain.law_allow:
+                # 도메인 법령 우선
+                if any("산업안전" in a for a in domain.law_allow):
+                    candidates.extend(
+                        ["산업안전보건법 시행령", "산업안전보건법 시행규칙", "산업안전보건법"]
+                    )
+                if any("중대재해" in a for a in domain.law_allow):
+                    candidates.append("중대재해 처벌 등에 관한 법률 시행령")
+                if any("에너지" in a for a in domain.law_allow):
+                    candidates.extend(
+                        ["에너지이용 합리화법 시행령", "에너지이용 합리화법 시행규칙"]
+                    )
             candidates.extend(
                 [
                     "산업안전보건법 시행령",
@@ -318,14 +351,16 @@ class LawClient:
                 ]
             )
             for law_name in candidates:
+                if not law_allowed(law_name, domain):
+                    continue
                 hit = get_corpus_article(law_name, art)
                 if hit:
                     _append(article_from_row(hit))
                     break
             if len(articles) >= limit:
-                return articles[:limit]
+                return filter_articles_by_domain(articles, domain)[:limit]
 
-        # 1) 명시적 "제N조" 패턴 — 코퍼스 우선 (네트워크 0)
+        # 2) 명시적 "제N조" 패턴 — 코퍼스 우선 (네트워크 0)
         explicit = re.findall(
             r"([가-힣A-Za-zㆍ·\s]{2,40}?)\s*제\s*(\d+)(?:\s*조|\s*의\s*(\d+))?",
             expanded,
@@ -334,9 +369,12 @@ class LawClient:
             law_hint = law_hint.strip()
             art = f"{main}의{sub}" if sub else main
             law_name = law_hint if len(law_hint) >= 2 else "산업안전보건법"
+            if not law_allowed(law_name, domain) and domain.law_allow:
+                # 도메인 밖 법령 힌트는 스킵
+                continue
             cached = get_corpus_article(law_name, art)
             if not cached:
-                for hit in search_corpus(f"{law_name} 제{art}조", limit=5):
+                for hit in search_corpus(f"{law_name} 제{art}조", limit=5, domain=domain):
                     if str(hit.get("article_no")) == str(art):
                         if not law_hint or law_name in (hit.get("law_name") or "") or (
                             hit.get("law_name") or ""
@@ -346,20 +384,20 @@ class LawClient:
             if cached:
                 _append(article_from_row(cached))
             else:
-                # 코퍼스에 없을 때만 법제처 (느림)
                 if len(law_hint) < 2:
                     hits = await self.search_law(expanded, display=5)
                     law_name = hits[0].law_name if hits else "산업안전보건법"
-                _append(await self.get_article(law_name, art))
+                if law_allowed(law_name, domain):
+                    _append(await self.get_article(law_name, art))
 
-        # 2) 주제 맵 우선 주입 (보일러→에너지법 제39·73 등)
-        #    예전: 코퍼스 히트가 있으면 토픽을 건너뛰어 엉뚱한 산안법 조가 먼저 붙음
+        # 3) 주제 맵 (도메인 허용 법령만)
         topic_pairs = match_topic_articles(expanded)
         for law, art in topic_pairs:
+            if not law_allowed(law, domain):
+                continue
             cached = get_corpus_article(law, art)
             if not cached:
-                # 고시 편·개요 키
-                for hit in search_corpus(f"{law} {art}", limit=4):
+                for hit in search_corpus(f"{law} {art}", limit=4, domain=domain):
                     ha = str(hit.get("article_no") or "")
                     if ha == str(art) or normalize_article_key(ha) == normalize_article_key(
                         str(art)
@@ -369,25 +407,14 @@ class LawClient:
             if cached:
                 _append(article_from_row(cached))
             if len(articles) >= limit:
-                return articles[:limit]
+                return filter_articles_by_domain(articles, domain)[:limit]
 
-        # 3) 로컬 코퍼스 전문검색으로 보강
-        #    보일러 처벌 등 토픽이 이미 채워졌으면 산안법·엉뚱한 별표로 덮지 않음
-        if len(articles) >= limit:
-            return articles[:limit]
-        corpus_hits = search_corpus(expanded, limit=max(limit * 2, 8))
-        boiler_focus = any(
-            "에너지이용" in (a.law_name or "") or "열사용기자재" in (a.law_name or "")
-            for a in articles
-        ) or any("에너지이용" in p[0] or "열사용" in p[0] for p in topic_pairs)
-        for hit in corpus_hits:
-            if boiler_focus:
-                ln = hit.get("law_name") or ""
-                # 보일러 맥락: 산안법·MSDS 과태료 별표 유입 차단
-                if "산업안전보건" in ln and "에너지" not in ln:
-                    continue
-            _append(article_from_row(hit))
-            if len(articles) >= limit:
-                break
+        # 4) 코퍼스 전문검색 보강
+        if len(articles) < limit:
+            corpus_hits = search_corpus(expanded, limit=max(limit * 2, 8), domain=domain)
+            for hit in corpus_hits:
+                _append(article_from_row(hit))
+                if len(articles) >= limit:
+                    break
 
-        return articles[:limit]
+        return filter_articles_by_domain(articles, domain)[:limit]

@@ -325,18 +325,28 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
     return None
 
 
-def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
+def search_corpus(
+    query: str,
+    *,
+    limit: int = 6,
+    domain: object | None = None,
+) -> list[dict]:
     """조문 제목·본문 토큰 매칭. score 높은 순.
 
     역인덱스로 후보만 스코어링 (전 코퍼스 선형 스캔 제거).
+    domain: Domain 객체 — law_allow/deny·시드 강제 편입.
     Returns list of corpus row dicts with extra 'score'.
     """
+    from .domain_router import Domain, law_allowed, route_domain
+
     q = (query or "").strip()
     if not q:
         return []
     toks = _tokens(q)
     if not toks:
         return []
+
+    dom: Domain = domain if isinstance(domain, Domain) else route_domain(q)
 
     # 쿼리 전체 구문 보너스 (예: "산업안전지도사")
     phrase = re.sub(r"\s+", "", q.lower())
@@ -375,32 +385,19 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
         for t in ranked_toks[:3]:
             cand.update(inv.get(t, [])[:200])
 
-    # 도메인 힌트: 보일러·열사용 검사 vs 산안법 MSDS 과태료 혼동 방지
-    q_boiler = any(
-        k in q
-        for k in (
-            "보일러",
-            "열사용",
-            "검사대상기기",
-            "열매유",
-            "압력용기",
-            "용접검사",
-            "구조검사",
-        )
-    )
-    q_msds = any(k in q.lower() for k in ("물질안전", "msds", "게시", "미부착", "미비치"))
     q_penalty = any(k in q for k in ("처벌", "벌칙", "과태료", "처분", "안받"))
 
-    # 벌칙 조(제73) 본문에 '보일러'·'처벌' 토큰이 없어 후보에서 빠짐 → 강제 편입
-    if q_boiler and not q_msds:
-        force_keys = {"39", "39의2", "73", "75", "40"}
+    # 시드 조문 강제 편입 (본문에 질문 토큰이 없어도)
+    if dom.seed_articles:
+        seed_set = {(law, art) for law, art in dom.seed_articles}
         for d in docs:
-            if "에너지이용" not in d["law"]:
-                continue
-            if d["art_key"] in force_keys or (
-                q_penalty and d["art_key"] in ("73", "39")
-            ):
-                cand.add(d["i"])
+            for law, art in seed_set:
+                if law in d["law"] and (
+                    d["art_key"] == art
+                    or d["art_no"] == art
+                    or normalize_article_key(d["art_no"]) == normalize_article_key(art)
+                ):
+                    cand.add(d["i"])
 
     hits: list[dict] = []
     for di in cand:
@@ -409,6 +406,14 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
         body = d["body"]
         law = d["law"]
         art_no = d["art_no"]
+
+        if not law_allowed(law, dom):
+            continue
+        if dom.exclude_forms and (art_no.startswith("별지") or "서식" in title):
+            continue
+        if dom.suppress_fine_table and art_no.startswith("별표") and "과태료" in title:
+            continue
+
         score = 0.0
 
         if byeol_key and d["art_key"] == byeol_key:
@@ -434,23 +439,17 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
         if art_no.startswith("별지") or "서식" in title:
             score *= 0.25 if q_penalty else 0.55
 
-        if q_boiler and not q_msds:
-            if "에너지이용" in law or "열사용기자재" in law:
-                score *= 2.2
-                # 검사 의무·벌칙 조 가산
-                if d["art_key"] in ("39", "39의2", "73", "75", "40", "개요", "7편"):
-                    score += 12.0
-            # 산안법 물질안전·과태료 별표는 보일러 검사 질문에서 감점
-            if "물질안전" in title or "물질안전" in body[:120]:
-                score *= 0.12
-            if "산업안전보건" in law and (
-                d["art_key"] in ("114", "175") or "별표35" in d["art_key"]
+        # 도메인 시드 가산
+        for law_s, art_s in dom.seed_articles:
+            if law_s in law and (
+                d["art_key"] == art_s
+                or normalize_article_key(art_no) == normalize_article_key(art_s)
             ):
-                score *= 0.15
-            if q_penalty and d["art_key"] == "73":
-                score += 20.0
-            if q_penalty and d["art_key"] == "39":
-                score += 15.0
+                score += 18.0 if dom.prefer_criminal and art_s in ("73", "39") else 12.0
+
+        # allow 목록 법령 가산
+        if dom.law_allow and any(a in law for a in dom.law_allow):
+            score *= 1.8
 
         if score <= 0:
             continue
