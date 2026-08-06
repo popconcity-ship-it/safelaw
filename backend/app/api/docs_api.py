@@ -54,22 +54,41 @@ async def law_attach(fl_seq: int = Query(..., ge=1, le=10_000_000_000)):
     if r.status_code >= 400 or not r.content:
         raise HTTPException(404, f"첨부 없음 flSeq={fl_seq}")
 
-    ctype = (r.headers.get("content-type") or "application/octet-stream").split(";")[0]
+    raw_ct = r.headers.get("content-type") or "application/octet-stream"
+    ctype = raw_ct.split(";")[0].strip() or "application/octet-stream"
     # 법제처가 charset 을 붙이는 경우 정리
     if ctype in ("application/hwp", "application/haansofthwp"):
         ctype = "application/x-hwp"
-    disp = r.headers.get("content-disposition") or ""
+    magic = r.content[:8]
+    if magic.startswith(b"%PDF"):
+        ctype = "application/pdf"
+    elif magic.startswith(b"GIF"):
+        ctype = "image/gif"
+    elif magic[:3] == b"\xff\xd8\xff":
+        ctype = "image/jpeg"
+    elif magic.startswith(b"\x89PNG"):
+        ctype = "image/png"
+
+    # 한글 filename 이 들어 있는 Content-Disposition 을 그대로 넘기면
+    # 일부 서버/프록시에서 헤더 인코딩 오류(500) → ASCII 파일명만 사용
+    if "pdf" in ctype:
+        fname = f"byeol_{fl_seq}.pdf"
+        disp = f'inline; filename="{fname}"'
+    elif "image" in ctype or "gif" in ctype:
+        fname = f"byeol_{fl_seq}.gif"
+        disp = f'inline; filename="{fname}"'
+    elif "hwp" in ctype:
+        fname = f"byeol_{fl_seq}.hwp"
+        disp = f'attachment; filename="{fname}"'
+    else:
+        fname = f"byeol_{fl_seq}.bin"
+        disp = f'attachment; filename="{fname}"'
+
     headers_out = {
         "Cache-Control": "public, max-age=86400",
         "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": disp,
     }
-    if disp:
-        headers_out["Content-Disposition"] = disp
-    elif "pdf" in ctype:
-        headers_out["Content-Disposition"] = f'inline; filename="byeol_{fl_seq}.pdf"'
-    elif "image" in ctype:
-        headers_out["Content-Disposition"] = f'inline; filename="byeol_{fl_seq}.gif"'
-
     return Response(content=r.content, media_type=ctype, headers=headers_out)
 
 
