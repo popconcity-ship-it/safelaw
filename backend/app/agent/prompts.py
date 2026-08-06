@@ -387,6 +387,127 @@ def _byeol_general_head(body: str, max_len: int = 500) -> str:
     return t
 
 
+def extract_notice_relevant(
+    body: str, question: str, *, max_chars: int = 1400, max_chunks: int = 4
+) -> str:
+    """고시(편) 본문에서 질문 관련 절·항만 발췌 — 별표 금액 행 발췌와 동일 역할.
+
+    예: 「보일러 설치검사 기준」 → 22.1 설치장소 · 천정 1.2 m 등.
+    """
+    t = (body or "").strip()
+    q = (question or "").strip()
+    if not t or not q:
+        return ""
+
+    # 동의어 확장 (고시 표기: 천정, 설치․시공)
+    terms: list[str] = []
+    seen: set[str] = set()
+    expand: list[tuple[re.Pattern[str], list[str]]] = [
+        (re.compile(r"설치\s*검사|설치검사"), ["설치검사", "설치", "설치․시공", "설치시공", "22."]),
+        (re.compile(r"용접\s*검사|용접검사"), ["용접검사", "용접", "I단계"]),
+        (re.compile(r"구조\s*검사|구조검사"), ["구조검사", "구조"]),
+        (re.compile(r"계속\s*사용|성능검사"), ["계속사용", "성능검사"]),
+        (re.compile(r"천장|천정"), ["천정", "천장", "1.2"]),
+        (re.compile(r"옥내|옥외"), ["옥내", "옥외"]),
+        (re.compile(r"이격|거리|여유"), ["거리", "0.45", "1.2", "0.6"]),
+        (re.compile(r"면제"), ["면제", "공장인정"]),
+        (re.compile(r"재료|두께"), ["재료", "두께", "허용"]),
+        (re.compile(r"보일러"), ["보일러"]),
+        (re.compile(r"압력용기"), ["압력용기"]),
+    ]
+    for pat, xs in expand:
+        if pat.search(q):
+            for x in xs:
+                if x not in seen:
+                    seen.add(x)
+                    terms.append(x)
+    for m in re.finditer(r"[가-힣A-Za-z0-9.]{2,}", q):
+        tok = m.group(0)
+        if tok not in seen and tok not in ("기준", "관한", "알려", "무엇", "인가요"):
+            seen.add(tok)
+            terms.append(tok)
+    if not terms:
+        terms = [q[:20]]
+
+    # 절 단위 분리: 22.1 / 22.1.1 / 제22장  (호 (1)은 절 안에 유지)
+    chunks = re.split(
+        r"(?=(?:^|\n)\s*(?:제\s*\d+\s*장|\d+\.\d+(?:\.\d+)?\s))",
+        t,
+    )
+    chunks = [c.strip() for c in chunks if c and len(c.strip()) > 25]
+    if not chunks:
+        chunks = [t]
+
+    def score(ch: str) -> float:
+        s = 0.0
+        for term in terms:
+            if term in ch:
+                s += 3.0 + min(2.0, len(term) * 0.15)
+                # 제목 줄 가중
+                head = ch[:80]
+                if term in head:
+                    s += 2.0
+        if re.search(r"\d+\s*m|\d+\s*㎜|\d+\s*mm|\d+\s*%", ch):
+            s += 1.0  # 수치 기준 가산
+        return s
+
+    ranked = sorted(chunks, key=score, reverse=True)
+    picked: list[str] = []
+    total = 0
+    for ch in ranked:
+        if score(ch) < 3.0:
+            continue
+        # 청크 길이 제한
+        piece = ch if len(ch) <= 480 else ch[:480].rsplit("\n", 1)[0] + "…"
+        piece = re.sub(r"\n{3,}", "\n\n", piece).strip()
+        if not piece or any(piece[:60] == p[:60] for p in picked):
+            continue
+        if total + len(piece) > max_chars and picked:
+            break
+        picked.append(piece)
+        total += len(piece)
+        if len(picked) >= max_chunks:
+            break
+
+    if not picked:
+        # 폴백: 질문 키워드 주변 슬라이스
+        best_i = -1
+        best_s = 0
+        for term in terms[:6]:
+            i = t.find(term)
+            if i >= 0:
+                sc = 1 + (2 if term in terms[:3] else 0)
+                if sc > best_s:
+                    best_s = sc
+                    best_i = i
+        if best_i < 0:
+            return ""
+        a = max(0, best_i - 120)
+        b = min(len(t), best_i + 500)
+        picked = [t[a:b].strip()]
+
+    return (
+        "【고시 관련 발췌 — 수치·표는 고시 PDF 정본 확인】\n"
+        + "\n\n---\n".join(picked)
+    )
+
+
+def _notice_llm_excerpt(body: str, question: str = "", max_len: int = 900) -> str:
+    """고시 편 본문 → 질문 관련 절 발췌 (별표 행 발췌와 대칭)."""
+    t = (body or "").strip()
+    if not t:
+        return "(고시 본문 없음)"
+    rel = extract_notice_relevant(t, question, max_chars=max_len) if question else ""
+    if rel:
+        return rel
+    # 관련 절 못 찾으면 앞부분 요약
+    return _clean_excerpt(t, max_len) + (
+        "\n\n(※ 질문과 맞는 절을 자동 발췌하지 못함. 고시 PDF·카드 전문 확인.)"
+        if question
+        else ""
+    )
+
+
 def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str:
     """별표 → 일반기준 요약 + (질문 관련 시) 개별 금액 행.
 
@@ -434,11 +555,20 @@ def _byeol_llm_excerpt(body: str, question: str = "", max_len: int = 700) -> str
 
 
 def _article_llm_body(a, question: str = "") -> str:
-    """LLM용 조문/별표 본문 — UI용 전문과 분리 (토큰 절감)."""
+    """LLM용 조문/별표/고시 본문 — UI용 전문과 분리 (토큰 절감)."""
     art = str(getattr(a, "article_no", "") or "")
     body = getattr(a, "body", "") or ""
+    law = getattr(a, "law_name", "") or ""
     if art.startswith("별표") or art.startswith("별지"):
         return _byeol_llm_excerpt(body, question=question, max_len=700)
+    # 고시 편·개요: 별표처럼 질문 관련 절만
+    if (
+        art == "개요"
+        or art.endswith("편")
+        or "검사 및 검사면제" in law
+        or (getattr(a, "kind", None) == "notice")
+    ):
+        return _notice_llm_excerpt(body, question=question, max_len=1000)
     # 일반 조문: 항 2개 분량 정도
     return _law_excerpt(body, max_hang=2) or _clean_excerpt(body, 600)
 

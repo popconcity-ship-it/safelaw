@@ -172,9 +172,12 @@ class Orchestrator:
                 "현장 실정에 맞게 수정하세요."
             )
         else:
-            # 1) 조문만으로 답 가능하면 LLM 생략 (도메인 grounded_only 등)
+            # 1) 조문·고시 발췌만으로 답 가능하면 LLM 생략
             grounded = build_grounded_answer(message, articles, domain)
-            if grounded and domain.grounded_only:
+            if grounded and (
+                domain.grounded_only
+                or (domain.id == "energy_thermal" and not domain.prefer_criminal)
+            ):
                 intent = f"domain:{domain.id}"
                 answer = grounded
                 kosha_sources = []

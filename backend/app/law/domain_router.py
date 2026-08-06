@@ -100,6 +100,8 @@ _DOMAIN_RULES: list[tuple[tuple[str, ...], Domain]] = [
             "구조검사",
             "검사면제",
             "철금속가열로",
+            "설치검사",
+            "계속사용검사",
         ),
         Domain(
             id="energy_thermal",
@@ -120,6 +122,24 @@ _DOMAIN_RULES: list[tuple[tuple[str, ...], Domain]] = [
     ),
 ]
 
+# 열사용 고시 「기준·설치검사」 질문 — 형사 시드 대신 고시 편 우선
+_ENERGY_STANDARDS = Domain(
+    id="energy_thermal",
+    law_allow=("에너지이용", "열사용기자재"),
+    law_deny=("산업안전보건", "중대재해"),
+    seed_articles=(
+        ("열사용기자재의 검사 및 검사면제에 관한 기준", "3편"),  # 설치검사
+        ("열사용기자재의 검사 및 검사면제에 관한 기준", "2편"),  # 용접·구조
+        ("열사용기자재의 검사 및 검사면제에 관한 기준", "개요"),
+        ("에너지이용 합리화법", "39"),
+    ),
+    skip_kosha=True,
+    prefer_criminal=False,
+    exclude_forms=True,
+    suppress_fine_table=True,
+    grounded_only=False,  # 고시 발췌 + LLM/게이트
+)
+
 _GENERAL = Domain(id="general")
 
 _PENALTY_KEYS = (
@@ -134,6 +154,22 @@ _PENALTY_KEYS = (
     "미실시",
 )
 
+_STANDARDS_KEYS = (
+    "기준",
+    "설치검사",
+    "설치 검사",
+    "용접검사",
+    "구조검사",
+    "계속사용",
+    "시공",
+    "천정",
+    "천장",
+    "이격",
+    "거리",
+    "옥내",
+    "면제",
+)
+
 
 def route_domain(query: str) -> Domain:
     """질문 → 도메인 정책. 매칭 없으면 general."""
@@ -144,7 +180,17 @@ def route_domain(query: str) -> Domain:
     for keys, dom in _DOMAIN_RULES:
         for k in keys:
             if k.lower() in q_l or k in q:
-                # 에너지 도메인: MSDS 키워드가 같이 있으면 msds 우선은 규칙 순서로 이미 처리
+                # 에너지: 처벌 vs 고시 기준 질문 분기
+                if dom.id == "energy_thermal":
+                    is_penalty = any(p in q for p in _PENALTY_KEYS)
+                    is_std = any(s in q for s in _STANDARDS_KEYS)
+                    if is_std and not is_penalty:
+                        return _ENERGY_STANDARDS
+                    if is_penalty:
+                        return dom  # criminal seeds
+                    # 단순 "보일러" 등 — 기준 쪽으로 (고시 검색 우선)
+                    if not is_penalty:
+                        return _ENERGY_STANDARDS
                 return dom
     return _GENERAL
 
@@ -185,13 +231,20 @@ def filter_articles_by_domain(articles: list, domain: Domain) -> list:
             continue
         if domain.exclude_forms and (art.startswith("별지") or "서식" in title):
             continue
-        if domain.suppress_fine_table and art.startswith("별표") and "과태료" in title:
+        if domain.suppress_fine_table and art.startswith("별표"):
+            # 에너지 기준 질문: 별표·서식성 표 노이즈 제거
             continue
         if domain.prefer_criminal and art.startswith("별표"):
-            # 형사 벌칙 우선 시 과태료 별표 제외
             body = getattr(a, "body", None) or (a.get("body") if isinstance(a, dict) else "") or ""
             if "과태료" in title or "과태료" in body[:80]:
                 continue
+        # 고시 기준 질문(비형사): 벌칙 조는 카드 슬롯을 차지하지 않음
+        if (
+            domain.id == "energy_thermal"
+            and not domain.prefer_criminal
+            and (art in ("73", "75") or title.strip() == "벌칙")
+        ):
+            continue
         out.append(a)
     return out
 

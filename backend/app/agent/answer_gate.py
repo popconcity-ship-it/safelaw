@@ -183,6 +183,35 @@ def build_grounded_answer(
         lines.append("※ 참고용 · 최종 판단은 전문가·관할 기관 확인")
         return "\n".join(lines)
 
+    # 열사용 고시 기준·설치검사 등 — 관련 절 발췌로 답 구성
+    if domain.id == "energy_thermal" and not domain.prefer_criminal:
+        from .prompts import extract_notice_relevant
+
+        notice_bits: list[str] = []
+        for a in articles:
+            art = str(a.article_no or "")
+            law = a.law_name or ""
+            if not (
+                art == "개요"
+                or art.endswith("편")
+                or "열사용" in law
+                or "검사 및 검사면제" in law
+            ):
+                continue
+            rel = extract_notice_relevant(a.body or "", q, max_chars=900, max_chunks=3)
+            if rel:
+                label = f"[{law} {art}]"
+                notice_bits.append(f"{label}\n{rel}")
+            if len(notice_bits) >= 2:
+                break
+        if notice_bits:
+            head = "고시(열사용기자재 검사 기준)에서 질문과 관련된 부분입니다.\n\n"
+            return (
+                head
+                + "\n\n".join(notice_bits)
+                + "\n\n※ 수치·표는 고시 PDF 정본 확인 · 참고용"
+            )
+
     # 위험성평가 등 간단 의무
     if domain.id == "risk_assessment" and any(
         k in q for k in ("의무", "해야", "해당", "인가요", "인가", "하나요")

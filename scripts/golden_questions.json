@@ -80,5 +80,15 @@
     "domain": "energy_thermal",
     "must_laws": ["열사용", "에너지이용"],
     "forbid_laws": ["산업안전보건법"]
+  },
+  {
+    "id": "energy-install-standard",
+    "q": "보일러 설치검사 기준",
+    "domain": "energy_thermal",
+    "must_laws": ["열사용"],
+    "must_articles": ["3편"],
+    "forbid_articles": ["114", "175"],
+    "answer_must": ["설치"],
+    "answer_forbid": ["1차 100"]
   }
 ]
