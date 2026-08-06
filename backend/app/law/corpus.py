@@ -171,16 +171,22 @@ def article_from_row(row: dict, *, source: str = "corpus"):
 
 
 def normalize_article_key(article_no: str) -> str:
-    """제N조 / 별표 N / 별지 N → 코퍼스 키 (별표1, 36, 36의2)."""
+    """제N조 / 별표 N / 별지 N / 고시 편 → 코퍼스 키."""
     art = str(article_no or "").strip()
     if not art:
         return ""
+    if art in ("개요", "전문", "총칙"):
+        return art
     m = re.match(r"별표\s*(\d+)(?:\s*의\s*(\d+))?", art)
     if m:
         return f"별표{m.group(1)}" + (f"의{m.group(2)}" if m.group(2) else "")
     m = re.match(r"별지\s*(?:제)?\s*(\d+)", art)
     if m:
         return f"별지{m.group(1)}"
+    # 고시 편: "1편" / "제1편"
+    m = re.match(r"제?\s*(\d+)\s*편", art)
+    if m:
+        return f"{m.group(1)}편"
     m = re.match(r"(\d+)(?:의(\d+))?", art)
     if m:
         return f"{m.group(1)}의{m.group(2)}" if m.group(2) else m.group(1)
@@ -202,9 +208,17 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
         hint = hint.replace("산안법", "산업안전보건법")
     if "중처법" in hint:
         hint = hint.replace("중처법", "중대재해처벌등에관한법률")
+    if "에너지이용합리화법" in hint or "에너지합리화법" in hint:
+        hint = hint.replace("에너지이용합리화법", "에너지이용합리화법").replace(
+            "에너지합리화법", "에너지이용합리화법"
+        )
+        # 정식명 공백 포함
+        if "에너지이용합리화법" in hint and "에너지이용합리화법" == hint.replace(" ", ""):
+            pass
 
     is_byeol = art.startswith("별표") or art.startswith("별지")
-    want_sub = any(x in hint for x in ("시행령", "시행규칙", "규칙", "지침", "고시"))
+    is_notice_part = art == "개요" or art.endswith("편")
+    want_sub = any(x in hint for x in ("시행령", "시행규칙", "규칙", "지침", "고시", "기준"))
     best: tuple[float, dict] | None = None
     for row in load_corpus():
         if normalize_article_key(str(row.get("article_no") or "")) != art:
@@ -220,8 +234,8 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
             score = 30.0
         elif not hint:
             score = 5.0
-        elif is_byeol:
-            # 별표는 조문과 달리 힌트 법령이 본법이어도 시행령·규칙 별표를 허용
+        elif is_byeol or is_notice_part:
+            # 별표·고시 편: 힌트 느슨 허용
             score = 8.0
         else:
             continue

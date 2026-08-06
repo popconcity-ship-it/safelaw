@@ -1614,6 +1614,13 @@
       if (s === "중처법" || s.startsWith("중처법")) {
         s = s.replace("중처법", "중대재해처벌등에관한법률");
       }
+      if (s.includes("에너지이용합리화법") || s.includes("에너지합리화법")) {
+        s = s
+          .replace(/에너지이용합리화법/g, "에너지이용합리화법")
+          .replace(/에너지합리화법/g, "에너지이용합리화법");
+        // 정식명 공백: 에너지이용 합리화법
+        s = s.replace("에너지이용합리화법", "에너지이용합리화법");
+      }
       if (s.includes("중대재해처벌법") && !s.includes("등에관한")) {
         s = s.replace("중대재해처벌법", "중대재해처벌등에관한법률");
       }
@@ -1639,7 +1646,7 @@
       };
       // 항·호 포함 1회 매칭 (중복 칩·버튼 안 재매치 방지)
       const reArt =
-        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙|사업장\s*위험성평가에\s*관한\s*지침|법)(?:\s*시행령|\s*시행규칙)?\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+(?:의\d+)?)\s*호)?)\]?/g;
+        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|산업안전보건기준에\s*관한\s*규칙|사업장\s*위험성평가에\s*관한\s*지침|에너지이용\s*합리화법|에너지이용합리화법|법)(?:\s*시행령|\s*시행규칙)?\s*제\s*(\d+)(?:\s*의\s*(\d+))?\s*조(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+(?:의\d+)?)\s*호)?)\]?/g;
       t = t.replace(reArt, (m, full, main, sub, hang, ho) => {
         const art = sub ? `${main}의${sub}` : String(main);
         let label = full.replace(/^\[/, "").replace(/\]$/, "");
@@ -2253,12 +2260,31 @@
         .join("");
     }
 
-    /** 법령 위계 티어: 법률 > 시행령 > 시행규칙 > 지침 > 별표 */
+    /** 법령 위계 티어: 법률 > 시행령 > 시행규칙 > 지침·고시 > 별표 */
     function lawTierOf(lawName, articleNo) {
       const art = String(articleNo || "");
       const n = String(lawName || "");
       if (art.startsWith("별표") || art.startsWith("별지")) {
         return { key: "schedule", label: "별표", order: 5, cls: "law-tier-schedule" };
+      }
+      // 행정규칙·기술기준 고시 (예: 열사용기자재 … 기준)
+      if (
+        n.includes("고시") ||
+        (n.includes("기준") && !n.includes("기준에 관한 규칙")) ||
+        art === "개요" ||
+        /편$/.test(art)
+      ) {
+        // "…기준" 이 법령명 끝인 고시 — 다만 산업안전보건기준에 관한 규칙은 규칙
+        if (!(n.includes("기준에 관한 규칙") || n.includes("시행규칙"))) {
+          if (
+            n.includes("고시") ||
+            n.includes("검사 및 검사면제") ||
+            art === "개요" ||
+            /편$/.test(art)
+          ) {
+            return { key: "guide", label: "고시", order: 4, cls: "law-tier-guide" };
+          }
+        }
       }
       if (n.includes("시행규칙") || n.includes("기준에 관한 규칙")) {
         return { key: "rule", label: "시행규칙", order: 3, cls: "law-tier-rule" };
@@ -2266,7 +2292,7 @@
       if (n.includes("시행령")) {
         return { key: "decree", label: "시행령", order: 2, cls: "law-tier-decree" };
       }
-      if (n.includes("지침") || n.includes("고시")) {
+      if (n.includes("지침")) {
         return { key: "guide", label: "지침", order: 4, cls: "law-tier-guide" };
       }
       return { key: "act", label: "법률", order: 1, cls: "law-tier-act" };
@@ -2776,19 +2802,27 @@
           const art = String(a.article_no || "").replace(/\s/g, "");
           const isByeol = art.startsWith("별표") || art.startsWith("별지");
           let citeLabel = "";
+          const isNotice =
+            art === "개요" ||
+            /편$/.test(art) ||
+            /검사 및 검사면제|고시/.test(a.law_name || "");
           if (art.startsWith("별표")) {
             citeLabel = `${a.law_name || ""} ${art.replace(/^별표/, "별표 ")}`;
           } else if (art.startsWith("별지")) {
             citeLabel = `${a.law_name || ""} ${art.replace(/^별지/, "별지 제")}호서식`;
+          } else if (isNotice) {
+            citeLabel = `${a.law_name || ""} ${art === "개요" ? "(고시 개요)" : art}`;
           } else {
             citeLabel = `${a.law_name || ""} 제${art}조`;
           }
           const title = a.title || "";
           const body = a.body || "";
-          const sum = lawSummary(body, isByeol ? 220 : 180, question || "");
+          const sum = lawSummary(body, isByeol || isNotice ? 220 : 180, question || "");
           const pdfUrl = (a.pdf_url || "").trim();
           const hwpUrl = (a.hwp_url || "").trim();
-          const hasMedia = isByeol && (pdfUrl || hwpUrl || (a.image_url || "").trim());
+          const hasMedia =
+            (isByeol || isNotice) &&
+            (pdfUrl || hwpUrl || (a.image_url || "").trim());
           // 과태료 별표: 질문 관련 금액을 카드에 바로 표시 (접힌 상태에서도)
           const fine =
             isByeol &&
@@ -2808,15 +2842,17 @@
               `<p class="byeol-open-hint">전체 표·기타 위반은 <strong>PDF 원본</strong>에서 확인하세요.</p>` +
               `<div class="byeol-files">` +
               (pdfUrl
-                ? `<a class="byeol-pdf-main" href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 별표 PDF 새 창</a>`
+                ? `<a class="byeol-pdf-main" href="${esc(pdfUrl)}" target="_blank" rel="noopener">📄 ${isNotice ? "고시" : "별표"} PDF 새 창</a>`
                 : "") +
               (hwpUrl
                 ? `<a href="${esc(hwpUrl)}" target="_blank" rel="noopener">한글 HWP</a>`
                 : "") +
               `</div></div>` +
-              (intro
-                ? `<div class="byeol-prose">${lawTextHtml(intro, keywords)}</div>`
-                : "");
+              (isNotice
+                ? `<div class="byeol-prose">${lawTextHtml(body.slice(0, 2500), keywords)}</div>`
+                : intro
+                  ? `<div class="byeol-prose">${lawTextHtml(intro, keywords)}</div>`
+                  : "");
           } else if (isByeol) {
             bdInner = fineHtml + formatByeolProseOnly(body, title, keywords);
           } else {

@@ -67,6 +67,28 @@ ENABLE_LLM=true
 
 헬스: `https://safelaw.onrender.com/api/health`
 
+### 법령·고시 적재 원칙
+
+| 유형 | 적재 방식 | 스크립트 |
+|:---|:---|:---|
+| 법률·시행령·시행규칙 | 법제처 XML 조문 = **동일 corpus 구조** | `build_law_corpus.py` |
+| 별표·서식 | 조문 키 + PDF flSeq | 코퍼스 빌드 시 포함 |
+| **고시·기술기준** (수백 쪽) | **전문 덤프 금지** → 편·개요 발췌 + PDF 정본 | `ingest_notice_pdf.py` |
+
+예: 에너지이용 합리화법 = 법률 구조 그대로.  
+열사용기자재 검사 고시(500쪽+) = 개요·제N편 요약만 검색, 수치·표는 PDF.
+
+```bash
+# 법률 추가
+cd backend && PYTHONPATH=. python ../scripts/build_law_corpus.py --skip-page-index \
+  --law "에너지이용 합리화법" --law "에너지이용 합리화법 시행령"
+
+# 고시 PDF (법제처 첨부 flSeq)
+python3 scripts/ingest_notice_pdf.py \
+  --name "열사용기자재의 검사 및 검사면제에 관한 기준" \
+  --fl-seq 166663603 --admrul-id 2100000281788
+```
+
 ### 법령 개정 자동 반영
 
 | 층 | 동작 |

@@ -296,6 +296,24 @@ async def build(laws: list[str] | None = None) -> Path:
         uniq.append(r)
     uniq.reverse()
 
+    # --law 부분 빌드 시 기존 코퍼스와 병합 (다른 법령 덮어쓰기 방지)
+    if laws is not None and OUT.is_file():
+        built_names = {r["law_name"] for r in uniq}
+        keep: list[dict] = []
+        for line in OUT.open(encoding="utf-8"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if o.get("law_name") in built_names:
+                continue
+            keep.append(o)
+        uniq = keep + uniq
+        print(f"(merge) kept other laws → total {len(uniq)}")
+
     with OUT.open("w", encoding="utf-8") as f:
         for r in uniq:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

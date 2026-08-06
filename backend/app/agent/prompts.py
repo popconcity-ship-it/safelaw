@@ -52,13 +52,15 @@ def build_user_prompt(
 
 
 def _article_label(a) -> str:
-    """조문/별표 표시 라벨."""
+    """조문/별표/고시 편 표시 라벨."""
     art = str(getattr(a, "article_no", "") or "")
     law = getattr(a, "law_name", "") or ""
     if art.startswith("별표"):
         return f"{law} {art.replace('별표', '별표 ', 1)}"
     if art.startswith("별지"):
         return f"{law} 별지 제{art.replace('별지', '', 1)}호서식"
+    if art == "개요" or art.endswith("편"):
+        return f"{law} {art}"
     return f"{law} 제{art}조"
 
 
