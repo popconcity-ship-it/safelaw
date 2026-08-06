@@ -55,12 +55,63 @@ def _article_label(a) -> str:
     return f"{law} 제{art}조"
 
 
+def _byeol_llm_excerpt(body: str, max_len: int = 700) -> str:
+    """별표 전문(수만 자 표)을 LLM에 넣지 않고 앞 설명·구조만.
+
+    UI 카드/PDF에 전문이 있으므로, 모델에는 존재·제목·일반기준 요지만.
+    """
+    t = (body or "").strip()
+    if not t:
+        return "(본문 없음 — UI 별표 PDF 확인)"
+    # 박스 표·개별기준 표 이전까지만
+    cut = re.search(
+        r"(?:^|\n)\s*(?:4\.\s*개별기준|[┌┐└┘├┤┬┴┼─│]|\|{3,})",
+        t,
+    )
+    if cut and cut.start() > 80:
+        t = t[: cut.start()].strip()
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    if len(t) > max_len:
+        t = _clean_excerpt(t, max_len)
+    return (
+        t
+        + "\n\n(※ 개별 위반행위별 과태료 금액 표 전문은 UI 별표 PDF에 있음. "
+        "금액 표를 지어내지 말고, 별표 PDF·카드를 보라고 안내하세요.)"
+    )
+
+
+def _article_llm_body(a) -> str:
+    """LLM용 조문/별표 본문 — UI용 전문과 분리 (토큰 절감)."""
+    art = str(getattr(a, "article_no", "") or "")
+    body = getattr(a, "body", "") or ""
+    if art.startswith("별표") or art.startswith("별지"):
+        return _byeol_llm_excerpt(body, 700)
+    # 일반 조문: 항 2개 분량 정도
+    return _law_excerpt(body, max_hang=2) or _clean_excerpt(body, 600)
+
+
 def format_articles_block(articles: list) -> str:
+    """LLM 프롬프트용. UI cards 의 전문과 달리 발췌만 넣음.
+
+    별표 3만 자 표 전문을 넣으면 Groq 한도·타임아웃·비용이 폭증함.
+    """
     if not articles:
         return "(검색된 조문 없음 — 법적 주장을 하지 말고 확인 불가 안내)"
     blocks = []
+    total = 0
+    budget = 4500  # 대략 전체 근거 블록 상한 (문자)
     for a in articles:
-        blocks.append(f"### [{_article_label(a)}] {a.title}\n{a.body}")
+        label = _article_label(a)
+        body = _article_llm_body(a)
+        chunk = f"### [{label}] {getattr(a, 'title', '') or ''}\n{body}"
+        if total + len(chunk) > budget and blocks:
+            blocks.append(
+                f"### (이하 생략) 추가 조문/별표는 UI 카드·PDF 참고 — "
+                f"남은 {len(articles) - len(blocks)}건"
+            )
+            break
+        blocks.append(chunk)
+        total += len(chunk)
     return "\n\n".join(blocks)
 
 
