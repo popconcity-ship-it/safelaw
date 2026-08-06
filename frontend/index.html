@@ -1698,17 +1698,34 @@
             `${esc(shown)}</button>`
         );
       });
-      // 별표 N
+      // 별표 N (정식명·약칭·시행규칙만 단독 표기 모두)
       t = t.replace(
-        /\[?((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률)(?:\s*시행령|\s*시행규칙)?\s*)?별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?\]?/g,
+        /\[?\s*((?:산안법|산업안전보건법|중처법|중대재해처벌법|중대재해\s*처벌\s*등에\s*관한\s*법률|에너지이용\s*합리화법|에너지이용합리화법)(?:\s*시행령|\s*시행규칙)?|(?:시행령|시행규칙))\s*별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?\s*\]?/g,
         (m, lawPref, n, sub) => {
           const art = sub ? `별표${n}의${sub}` : `별표${n}`;
-          const label = (lawPref || "") + (sub ? `별표 ${n}의${sub}` : `별표 ${n}`);
-          const lawKey = normalizeLawKey((lawPref || "").trim());
+          let pref = (lawPref || "").trim();
+          // 「시행규칙 별표 4」→ 산안법 시행규칙으로 복원
+          if (pref === "시행규칙" || pref === "시행령") {
+            pref = "산업안전보건법 " + pref;
+          }
+          const label = pref + (sub ? ` 별표 ${n}의${sub}` : ` 별표 ${n}`);
+          const lawKey = normalizeLawKey(pref);
           const shown = shortCiteLabel(label.trim());
           return hold(
             `<button type="button" class="law-cite cite-schedule" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label.trim())} · 별표 보기">` +
               `${esc(shown)}</button>`
+          );
+        }
+      );
+      // 법령명 없이 「별표 4」만 (카드 매칭용)
+      t = t.replace(
+        /\[\s*별표\s*[|·ㆍ／/]?\s*(\d+)(?:\s*의\s*(\d+))?\s*\]/g,
+        (m, n, sub) => {
+          const art = sub ? `별표${n}의${sub}` : `별표${n}`;
+          const label = sub ? `별표 ${n}의${sub}` : `별표 ${n}`;
+          return hold(
+            `<button type="button" class="law-cite cite-schedule" data-art="${esc(art)}" title="${esc(label)} · 별표 보기">` +
+              `${esc(label)}</button>`
           );
         }
       );
