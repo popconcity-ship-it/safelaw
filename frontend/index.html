@@ -616,35 +616,75 @@
       margin: 0 0 0.75em;
     }
     .msg.bot .ans-body p:last-child { margin-bottom: 0; }
-    /* 조문 인용: 칩/블록 금지 — 문장 안 밑줄 링크만 */
+    /* 조문 인용: 위계별 소프트 칩 (카드 범례 색과 동일 — 형광 금지·검색어 노랑과 구분) */
     .msg.bot .ans-body .law-cite,
     .msg.bot .law-cite {
       display: inline !important;
       width: auto !important;
       max-width: none !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: none !important;
-      border-radius: 0 !important;
-      border-bottom: 1.5px solid #60a5fa !important;
-      background: transparent !important;
+      margin: 0 2px !important;
+      padding: 1px 8px !important;
+      border: 1px solid transparent !important;
+      border-radius: 999px !important;
+      border-bottom: 1px solid transparent !important;
+      background: #dbeafe !important;
       box-shadow: none !important;
-      color: #1d4ed8 !important;
+      color: #1e40af !important;
       font: inherit !important;
       font-weight: 650 !important;
-      font-size: inherit !important;
-      line-height: inherit !important;
-      white-space: normal !important;
+      font-size: 0.92em !important;
+      line-height: 1.45 !important;
+      white-space: nowrap !important;
       word-break: keep-all !important;
       vertical-align: baseline !important;
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
+      transition: filter 0.12s, box-shadow 0.12s;
+    }
+    /* 법률 */
+    .msg.bot .law-cite.cite-act {
+      background: #dbeafe !important;
+      border-color: #93c5fd !important;
+      color: #1e40af !important;
+    }
+    /* 시행령 */
+    .msg.bot .law-cite.cite-decree {
+      background: #ede9fe !important;
+      border-color: #c4b5fd !important;
+      color: #5b21b6 !important;
+    }
+    /* 시행규칙 */
+    .msg.bot .law-cite.cite-rule {
+      background: #ccfbf1 !important;
+      border-color: #5eead4 !important;
+      color: #0f766e !important;
+    }
+    /* 별표·서식 */
+    .msg.bot .law-cite.cite-schedule {
+      background: #fef3c7 !important;
+      border-color: #fcd34d !important;
+      color: #b45309 !important;
+    }
+    /* 지침·고시 */
+    .msg.bot .law-cite.cite-guide {
+      background: #e2e8f0 !important;
+      border-color: #cbd5e1 !important;
+      color: #475569 !important;
     }
     .msg.bot .ans-body .law-cite:hover,
     .msg.bot .law-cite:hover {
-      background: rgba(59, 130, 246, 0.1) !important;
-      border-bottom-color: #1d4ed8 !important;
+      filter: brightness(0.97);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) !important;
+    }
+    .msg.bot .law-cite.cite-decree:hover {
+      box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.18) !important;
+    }
+    .msg.bot .law-cite.cite-schedule:hover {
+      box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.2) !important;
+    }
+    .msg.bot .law-cite.cite-rule:hover {
+      box-shadow: 0 0 0 2px rgba(13, 148, 136, 0.18) !important;
     }
     .msg.bot .law-card.flash {
       box-shadow: 0 0 0 2px #3b82f6;
@@ -1338,7 +1378,13 @@
     /**
      * 답변 본문 인용 → 클릭 시 아래 카드로
      * 본법·시행령·시행규칙 제N조 + 별표 N
+     * 위계 클래스(cite-act/decree/…)로 카드 범례와 같은 색
      */
+    function citeTierClass(lawPart, art) {
+      const tier = lawTierOf(lawPart || "", art || "");
+      return "cite-" + (tier.key || "act");
+    }
+
     function linkifyLawCites(html) {
       let t = html;
       // 산업안전보건법 시행령 제119조 / [산안법 시행규칙 제37조] 등
@@ -1351,8 +1397,9 @@
         const lawPart = label.replace(/\s*제\s*\d+(?:의\d+)?\s*조\s*$/, "").trim();
         const lawKey = normalizeLawKey(lawPart);
         const shown = shortCiteLabel(label);
+        const tierCls = citeTierClass(lawPart, art);
         return (
-          `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label)} · 조문 전문">` +
+          `<button type="button" class="law-cite ${tierCls}" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label)} · 조문 전문">` +
           `${esc(shown)}</button>`
         );
       });
@@ -1365,7 +1412,7 @@
           const lawKey = normalizeLawKey((lawPref || "").trim());
           const shown = shortCiteLabel(label.trim());
           return (
-            `<button type="button" class="law-cite" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label.trim())} · 별표 보기">` +
+            `<button type="button" class="law-cite cite-schedule" data-art="${esc(art)}" data-law="${esc(lawKey)}" title="${esc(label.trim())} · 별표 보기">` +
             `${esc(shown)}</button>`
           );
         }
@@ -1388,7 +1435,7 @@
           if (m) {
             const art = m[2] ? `별표${m[1]}의${m[2]}` : `별표${m[1]}`;
             return (
-              `<button type="button" class="law-cite" data-art="${esc(art)}" title="별표 보기">` +
+              `<button type="button" class="law-cite cite-schedule" data-art="${esc(art)}" title="별표 보기">` +
               `${highlightKeywords(p, keywords)}</button>`
             );
           }
