@@ -148,9 +148,70 @@ def load_corpus() -> tuple[dict, ...]:
     return tuple(rows)
 
 
+@lru_cache(maxsize=1)
+def _search_index() -> tuple[dict[str, list[int]], tuple[dict, ...]]:
+    """토큰 → 문서 id 역인덱스 + 검색용 전처리 문서.
+
+    매 질의마다 전 조문 lower/스캔하지 않도록 기동 시 1회 구축.
+    """
+    from collections import defaultdict
+
+    inv: dict[str, list[int]] = defaultdict(list)
+    docs: list[dict] = []
+    for i, row in enumerate(load_corpus()):
+        title = (row.get("title") or "").lower()
+        body = (row.get("body") or "").lower()
+        law = (row.get("law_name") or "").lower()
+        art_no = str(row.get("article_no") or "")
+        art_l = art_no.lower()
+        # 본문 전체가 아닌 제목+법령+조번호+본문 앞부분 위주 인덱싱
+        # (기술 고시 장문 표는 검색 노이즈·비용 ↑)
+        body_idx = body if len(body) <= 4000 else body[:3500]
+        blob = f"{title}\n{law}\n{art_l}\n{body_idx}"
+        toks = set(_tokens(blob))
+        for t in toks:
+            inv[t].append(i)
+        docs.append(
+            {
+                "i": i,
+                "row": row,
+                "title": title,
+                "body": body,
+                "law": law,
+                "art_no": art_no,
+                "art_key": normalize_article_key(art_no),
+                "blob_ns": re.sub(r"\s+", "", blob),
+                "title_ns": re.sub(r"\s+", "", title),
+            }
+        )
+    logger.info(
+        "law search index: docs=%s tokens=%s",
+        len(docs),
+        len(inv),
+    )
+    return dict(inv), tuple(docs)
+
+
+@lru_cache(maxsize=1)
+def _article_by_key() -> dict[str, list[dict]]:
+    """article_key → rows (get_corpus_article 가속)."""
+    by: dict[str, list[dict]] = {}
+    for row in load_corpus():
+        k = normalize_article_key(str(row.get("article_no") or ""))
+        if not k:
+            continue
+        by.setdefault(k, []).append(row)
+    return by
+
+
 def reload_corpus() -> int:
     load_corpus.cache_clear()
-    return len(load_corpus())
+    _search_index.cache_clear()
+    _article_by_key.cache_clear()
+    n = len(load_corpus())
+    _search_index()  # warm
+    _article_by_key()
+    return n
 
 
 def article_from_row(row: dict, *, source: str = "corpus"):
@@ -220,9 +281,8 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
     is_notice_part = art == "개요" or art.endswith("편")
     want_sub = any(x in hint for x in ("시행령", "시행규칙", "규칙", "지침", "고시", "기준"))
     best: tuple[float, dict] | None = None
-    for row in load_corpus():
-        if normalize_article_key(str(row.get("article_no") or "")) != art:
-            continue
+    candidates = _article_by_key().get(art) or []
+    for row in candidates:
         name = row.get("law_name") or ""
         nn = re.sub(r"\s+", "", name.replace("·", "ㆍ"))
         score = 0.0
@@ -268,6 +328,7 @@ def get_corpus_article(law_hint: str, article_no: str) -> dict | None:
 def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
     """조문 제목·본문 토큰 매칭. score 높은 순.
 
+    역인덱스로 후보만 스코어링 (전 코퍼스 선형 스캔 제거).
     Returns list of corpus row dicts with extra 'score'.
     """
     q = (query or "").strip()
@@ -288,39 +349,63 @@ def search_corpus(query: str, *, limit: int = 6) -> list[dict]:
             f"의{byeol_m.group(2)}" if byeol_m.group(2) else ""
         )
 
+    inv, docs = _search_index()
+    # 후보: 토큰별 문서 합집합 (희소 토큰 우선 확장)
+    ranked_toks = sorted(toks, key=lambda t: (len(inv.get(t, [])), -len(t)))
+    cand: set[int] = set()
+    for t in ranked_toks:
+        ids = inv.get(t)
+        if not ids:
+            continue
+        if not cand:
+            cand.update(ids)
+        else:
+            # 합집합 — 한국어 질의는 교집합이 너무 빡셈
+            cand.update(ids)
+        if len(cand) > 800:
+            break
+    # 별표 직접 지정은 전수 art_key 매칭 보강
+    if byeol_key:
+        for d in docs:
+            if d["art_key"] == byeol_key:
+                cand.add(d["i"])
+
+    if not cand:
+        # 폴백: 상위 토큰만 있는 문서
+        for t in ranked_toks[:3]:
+            cand.update(inv.get(t, [])[:200])
+
     hits: list[dict] = []
-    for row in load_corpus():
-        title = (row.get("title") or "").lower()
-        body = (row.get("body") or "").lower()
-        law = (row.get("law_name") or "").lower()
-        art_no = str(row.get("article_no") or "")
-        blob = f"{title}\n{body}\n{art_no}"
+    for di in cand:
+        d = docs[di]
+        title = d["title"]
+        body = d["body"]
+        law = d["law"]
+        art_no = d["art_no"]
         score = 0.0
 
-        if byeol_key and normalize_article_key(art_no) == byeol_key:
+        if byeol_key and d["art_key"] == byeol_key:
             score += 25.0
 
-        if phrase and len(phrase) >= 2 and phrase in re.sub(r"\s+", "", blob):
+        if phrase and len(phrase) >= 2 and phrase in d["blob_ns"]:
             score += 8.0
-            if phrase in re.sub(r"\s+", "", title):
+            if phrase in d["title_ns"]:
                 score += 6.0
 
         for t in toks:
             if t in title:
                 score += 4.0
             elif t in body:
-                # 긴 토큰일수록 가중
                 score += 1.0 + min(2.0, (len(t) - 2) * 0.25)
             elif t in law or t in art_no.lower():
                 score += 0.3
 
-        # 별표 쿼리인데 조문만 잔뜩 뜨는 것 완화
         if "별표" in q and not art_no.startswith("별표") and not art_no.startswith("별지"):
             score *= 0.35
 
         if score <= 0:
             continue
-        item = dict(row)
+        item = dict(d["row"])
         item["score"] = score
         hits.append(item)
 

@@ -76,8 +76,14 @@ class Orchestrator:
         import asyncio
 
         intent = classify_intent(message)
-        # 조문 검색(async) + KOSHA 검색(sync) 병렬
-        want_pdf = intent in ("kosha", "risk_assessment", "education", "general")
+        # KOSHA PDF 32k 청크 스캔은 비쌈 → 가이드 의도일 때만
+        # 법조·과태료·제N조 질문은 시드/카탈로그만 (체감 지연↓)
+        want_pdf = intent in ("kosha", "risk_assessment", "education")
+        if any(
+            k in message
+            for k in ("KOSHA", "kosha", "가이드", "안전보건공단", "기술지침")
+        ):
+            want_pdf = True
         kosha_limit = 3 if want_pdf else 2
 
         async def _kosha() -> list:
